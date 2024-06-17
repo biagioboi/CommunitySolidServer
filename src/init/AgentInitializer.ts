@@ -131,9 +131,20 @@ export class AgentInitializer extends Initializer {
         }],
       });
     } catch {
-      this.logger.info(
-        JSON.stringify((await this.agent.dids.getCreatedDids({ method: 'web' }))[0]),
-      );
+      const didResp:any = await this.agent.dids.resolve(did);
+      await this.agent.dids.resolveDidDocument(did);
+
+      await this.agent.dids.update({
+        did,
+        didDocument: didResp.didDocument,
+        overwrite: true,
+        options: {
+          keyType: KeyType.Ed25519,
+          privateKey: TypedArrayEncoder.fromString('afjdemoverysercure10000000008002')
+        }
+      });
+      let created_dids = await this.agent.dids.getCreatedDids({method: 'web', did: did});
+      console.log("This is the User Wallet, it has this DID: " + created_dids[0].did);
     }
   }
 }
