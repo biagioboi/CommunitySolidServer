@@ -55,9 +55,9 @@ export class DPoPWebIdExtractor extends CredentialsExtractor {
       );
       this.logger.info(`Verified WebID via DPoP-bound access token. WebID: ${webId
       }, client ID: ${clientId}, issuer: ${issuer}`);
-      const credentials: Credentials = { agent: { webId }, issuer: { url: issuer }};
+      const credentials: Credentials = { agent: webId, issuer };
       if (clientId) {
-        credentials.client = { clientId };
+        credentials.client = clientId;
       }
       return credentials;
     } catch (error: unknown) {

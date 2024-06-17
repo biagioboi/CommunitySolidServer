@@ -14,11 +14,11 @@ export class UnsecureConstantCredentialsExtractor extends CredentialsExtractor {
   public constructor(agent: Credentials['agent']);
   public constructor(agent: string | Credentials['agent']) {
     super();
-    this.credentials = { agent: typeof agent === 'string' ? { webId: agent } : agent };
+    this.credentials = { agent: typeof agent === 'string' ? agent : agent };
   }
 
   public async handle(): Promise<Credentials> {
-    this.logger.info(`Agent unsecurely claims to be ${this.credentials.agent!.webId}`);
+    this.logger.info(`Agent unsecurely claims to be ${this.credentials.agent}`);
     return this.credentials;
   }
 }

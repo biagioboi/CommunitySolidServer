@@ -31,9 +31,9 @@ export class BearerWebIdExtractor extends CredentialsExtractor {
       const { webid: webId, client_id: clientId, iss: issuer } = await this.verify(authorization!);
       this.logger.info(`Verified credentials via Bearer access token. WebID: ${webId
       }, client ID: ${clientId}, issuer: ${issuer}`);
-      const credentials: Credentials = { agent: { webId }, issuer: { url: issuer }};
+      const credentials: Credentials = { agent: webId, issuer };
       if (clientId) {
-        credentials.client = { clientId };
+        credentials.client = clientId;
       }
       return credentials;
     } catch (error: unknown) {

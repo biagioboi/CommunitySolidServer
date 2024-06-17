@@ -37,7 +37,7 @@ export class PermissionBasedAuthorizer extends Authorizer {
     // Ensure all required modes are within the agent's permissions.
     for (const [ identifier, modes ] of requestedModes.entrySets()) {
       const modeString = [ ...modes ].join(',');
-      this.logger.debug(`Checking if ${credentials.agent?.webId} has ${modeString} permissions for ${identifier.path}`);
+      this.logger.debug(`Checking if ${credentials.client} has ${modeString} permissions for ${identifier.path}`);
       const permissionSet = availablePermissions.get(identifier) ?? {};
       for (const mode of modes) {
         try {
@@ -78,7 +78,7 @@ export class PermissionBasedAuthorizer extends Authorizer {
   private requireModePermission(credentials: Credentials, permissionSet: PermissionSet, mode: AccessMode): void {
     if (!permissionSet[mode]) {
       if (this.isAuthenticated(credentials)) {
-        this.logger.warn(`Agent ${credentials.agent!.webId} has no ${mode} permissions`);
+        this.logger.warn(`Owner ${credentials.client} has no ${mode} permissions`);
         throw new ForbiddenHttpError();
       } else {
         // Solid, §2.1: "When a client does not provide valid credentials when requesting a resource that requires it,
@@ -95,6 +95,6 @@ export class PermissionBasedAuthorizer extends Authorizer {
    * @param credentials - Credentials to check.
    */
   private isAuthenticated(credentials: Credentials): boolean {
-    return typeof credentials.agent?.webId === 'string';
+    return typeof credentials.client === 'string';
   }
 }

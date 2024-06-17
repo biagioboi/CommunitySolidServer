@@ -14,8 +14,8 @@
         acp:allow acl:Read;
         acp:allOf [
             a acp:Matcher;
-            acp:client "my-demo-app";
-            acp:issuer <did:web:issuer123.solidcommunity.net>;
-            acp:agent <did:web:ben3101.solidcommunity.net>;
+            acp:agent "did:web:bboi.solidcommunity.net:public";
+            acp:issuer "did:web:secureissuer.solidcommunity.net:public";
+            acp:client "did:web:secureapp.solidcommunity.net:public";
         ]
     ].

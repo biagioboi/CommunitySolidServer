@@ -69,12 +69,12 @@ export class OwnerPermissionReader extends PermissionReader {
    * Will throw an error if none can be found.
    */
   private async findPodBaseUrl(credentials: Credentials): Promise<ResourceIdentifier> {
-    if (!credentials.agent?.webId) {
+    if (!credentials.agent) {
       throw new NotImplementedHttpError('Only authenticated agents could be owners');
     }
     let settings: AccountSettings;
     try {
-      settings = await this.accountStore.getSettings(credentials.agent.webId);
+      settings = await this.accountStore.getSettings(credentials.agent);
     } catch {
       throw new NotImplementedHttpError('No account registered for this WebID');
     }

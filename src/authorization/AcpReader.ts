@@ -102,9 +102,9 @@ export class AcpReader extends PermissionReader {
   private createContext(target: ResourceIdentifier, credentials: Credentials): IContext {
     return {
       target: target.path,
-      agent: credentials.agent?.webId,
-      client: credentials.client?.clientId,
-      issuer: credentials.issuer?.url,
+      agent: credentials.agent,
+      client: credentials.client,
+      issuer: credentials.issuer,
     };
   }
 

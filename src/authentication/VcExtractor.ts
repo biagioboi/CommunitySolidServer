@@ -13,16 +13,11 @@ export class VcExtractor {
   }
 
   public async getCredentials(body: NodeJS.Dict<any>): Promise<Credentials>{
-    const issuer: any = body['vcissuer']; //issuer of the relevant vc the user holds
-    const webId: any = body['user']; //user sending request
-    const clientId: any = body['app']; //name of application
-    const credentials : Credentials = {
-      agent: {webId: webId},
-      issuer: {url: issuer}
+    const credentials: Credentials = {
+      issuer: body.issuer,
+      client: body.client,
+      agent: body.agent,
     };
-    if (clientId) {
-      credentials.client = { clientId };
-    }
     return credentials;
   }
 }

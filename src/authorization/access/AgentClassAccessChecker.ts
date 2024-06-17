@@ -12,7 +12,7 @@ export class AgentClassAccessChecker extends AccessChecker {
       return true;
     }
     // Check if the agent is authenticated and if authenticated agents have access
-    if (typeof credentials.agent?.webId === 'string') {
+    if (typeof credentials.agent === 'string') {
       return acl.countQuads(rule, ACL.terms.agentClass, ACL.terms.AuthenticatedAgent, null) !== 0;
     }
     return false;

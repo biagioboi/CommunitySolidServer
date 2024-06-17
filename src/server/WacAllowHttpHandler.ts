@@ -64,7 +64,7 @@ export class WacAllowHttpHandler extends OperationHttpHandler {
     if (permissionSet) {
       const user: AclPermissionSet = permissionSet;
       let everyone: AclPermissionSet;
-      if (!credentials.agent?.webId) {
+      if (!credentials.agent) {
         // User is not authenticated so public permissions are the same as agent permissions
         this.logger.debug('User is not authenticated so has public permissions');
         everyone = user;

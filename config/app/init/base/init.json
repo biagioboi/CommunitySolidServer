@@ -6,7 +6,8 @@
     "css:config/app/init/initializers/server.json",
     "css:config/app/init/initializers/seeded-pod.json",
     "css:config/app/init/initializers/version.json",
-    "css:config/app/init/initializers/workers.json"
+    "css:config/app/init/initializers/workers.json",
+    "css:config/app/init/initializers/agent.json"
   ],
   "@graph": [
     {
@@ -51,7 +52,8 @@
         "@type": "SequenceHandler",
         "handlers": [
           { "@id": "urn:solid-server:default:WorkerParallelInitializer" },
-          { "@id": "urn:solid-server:default:ServerInitializer" }
+          { "@id": "urn:solid-server:default:ServerInitializer" },
+          { "@id": "urn:solid-server:default:AgentInitializer" }
         ]
       }
     },

@@ -1,13 +1,15 @@
+import {Agent, JsonTransformer, W3cJsonLdVerifiablePresentation} from '@credo-ts/core';
 import type { Credentials } from '../authentication/Credentials';
-import { VcExtractor } from '../authentication/VcExtractor';
-import { VpChecker } from '../authentication/VpChecker';
+import type { VcExtractor } from '../authentication/VcExtractor';
+import type { VpChecker } from '../authentication/VpChecker';
 import type { Authorizer } from '../authorization/Authorizer';
 import type { PermissionReader } from '../authorization/PermissionReader';
 import type { ModesExtractor } from '../authorization/permissions/ModesExtractor';
-import { Operation } from '../http/Operation';
+import type { Operation } from '../http/Operation';
 import type { ResponseDescription } from '../http/output/response/ResponseDescription';
+import { AgentInitializer } from '../init/AgentInitializer';
 import { getLoggerFor } from '../logging/LogUtil';
-import { HttpRequest } from './HttpRequest';
+import type { HttpRequest } from './HttpRequest';
 import type { OperationHttpHandlerInput } from './OperationHttpHandler';
 import { OperationHttpHandler } from './OperationHttpHandler';
 
@@ -58,6 +60,7 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
   private readonly permissionReader: PermissionReader;
   private readonly authorizer: Authorizer;
   private readonly operationHandler: OperationHttpHandler;
+  private readonly agentInitializer: AgentInitializer;
 
   public constructor(args: VcAuthorizingHttpHandlerArgs) {
     super();
@@ -67,16 +70,18 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
     this.permissionReader = args.permissionReader;
     this.authorizer = args.authorizer;
     this.operationHandler = args.operationHandler;
+    this.agentInitializer = new AgentInitializer();
+    this.agentInitializer.agent.initialize().then().catch(e => this.logger.info('Errore'));
   }
 
-  //Uses the VpChecker component to verify the VP, extracts credentials from a valid VP
-  //Checks the extracted credentials against the acr file for the requested resource
+  // Uses the VpChecker component to verify the VP, extracts credentials from a valid VP
+  // Checks the extracted credentials against the acr file for the requested resource
   public async handle(input: OperationHttpHandlerInput): Promise<ResponseDescription> {
     const { request, operation } = input;
-    let credentials : Credentials;
-    try{
+    let credentials: Credentials;
+    try {
       credentials = await this.vpChecker.handle(request);
-    }catch(error: unknown){
+    } catch (error: unknown) {
       this.logger.info(`Authorization failed: ${(error as any).message}`);
       throw error;
     }
@@ -102,9 +107,9 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
     return this.operationHandler.handleSafe(input);
   }
 
-  //Check acr has appropriate combo for user, app, issuer
-  //Uses VcExtractor and just takes these values from body of initial request
-  public async checkAcr(operation: Operation, body: NodeJS.Dict<any>): Promise<boolean>{
+  // Check acr has appropriate combo for user, app, issuer
+  // Uses VcExtractor and just takes these values from body of initial request
+  public async checkAcr(operation: Operation, body: NodeJS.Dict<any>): Promise<boolean> {
     const credentials: Credentials = await this.credentialsExtractor.getCredentials(body);
     this.logger.info(`Extracted credentials: ${JSON.stringify(credentials)}`);
 
@@ -118,22 +123,30 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
       [ ...availablePermissions.entries() ].map(([ id, map ]): string => `{ ${id.path}: ${JSON.stringify(map)} }`)
     }`);
 
-    //Return true if any permissions are available to this combination of user/app/issuer as this means there is a match
-    return (Array.from(availablePermissions.values()).some((value) => value.read === true));
+    // Return true if any permissions are available to this combination of user/app/issuer as this means there is a match
+    return [ ...availablePermissions.values() ].some(value => value.read === true);
   }
-  
-  public async extractNonceAndDomain(request: HttpRequest): Promise<any>{
+
+  public async extractNonceAndDomain(request: HttpRequest): Promise<any> {
     let nonceAndDomain = {};
-    try{
+    try {
       nonceAndDomain = await this.vpChecker.extractNonceAndDomain(request);
-    }catch(error){
+    } catch (error) {
       throw error;
     }
     return nonceAndDomain;
   }
 
-  public async getCredentials(body: NodeJS.Dict<any>) : Promise<Credentials>{
+  public async extractNonceAndDomainFromNew(request: HttpRequest): Promise<any> {
+    const z: any = JSON.parse(request.headers.vp as string ?? '{}');
+    const presentationParsed = JsonTransformer.fromJSON(z, W3cJsonLdVerifiablePresentation);
+    let nonceAndDomain = {};
+    nonceAndDomain = await this.vpChecker.extractNonceAndDomainFromNew(presentationParsed);
+
+    return nonceAndDomain;
+  }
+
+  public async getCredentials(body: NodeJS.Dict<any>): Promise<Credentials> {
     return this.credentialsExtractor.getCredentials(body);
   }
-  
 }
