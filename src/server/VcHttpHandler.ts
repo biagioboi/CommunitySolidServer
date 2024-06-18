@@ -189,7 +189,7 @@ export class VcHttpHandler extends HttpHandler {
         const crypto = require('crypto');
         const nonce = crypto.randomBytes(16).toString('base64');
         this.logger.info(`Generated Nonce: ${nonce}`);
-        const uri = request.url;
+        const ourDID = this.agentInitializer.did;
         // Store nonce and domain in the map
         this.nonceDomainMap.set(nonce, `https://bboi.solidcommunity.net/definition/ourProtocol#test`);
         const result: ResponseDescription = new ResponseDescription(401);
@@ -200,13 +200,10 @@ export class VcHttpHandler extends HttpHandler {
                     credentialQuery: {
                         reason: 'We need you to prove your eligibility.',
                         owner: {
-                            id: 'did:key:z6MkhnfPNoDFRu7ChY1u8d2zoJJv9Un9Br1KhHAyaBawnh5c',
+                            id: ourDID,
                         },
                         issuer: {
                             id: body.issuer,
-                        },
-                        creator: {
-                            id: 'did:key:z6MkhnfPNoDFRu7ChY1u8d2zoJJv9Un9Br1KhHAyaBawnh5c',
                         },
                         client: {
                             id: body.client,
@@ -279,10 +276,10 @@ export class VcHttpHandler extends HttpHandler {
                                 "proof_type": ["RsaSignature2018"]
                             }
                         },
-                        "definedACPContext": {
+                        "requestACP": {
                             "type": ["ACPContext"],
                             "target": `http://localhost:3000${uri}`,
-                            "owner": `http://localhost:3000`, // We should revise also this one .. maybe the server doesn't have a pod but have a proper space
+                            "owner": this.agentInitializer.did, // We should revise also this one .. maybe the server doesn't have a pod but have a proper space
                             "issuer": body.issuer,
                             "client": body.client,
                             "agent": body.agent,
@@ -292,6 +289,7 @@ export class VcHttpHandler extends HttpHandler {
                         challenge: nonce,
                         domain: `https://bboi.solidcommunity.net/definition/ourProtocol#context`,
                     },
+                    signPresentationRequest: false
 
         },
 

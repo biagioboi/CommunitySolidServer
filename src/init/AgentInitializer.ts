@@ -28,6 +28,7 @@ import { Initializer } from './Initializer';
 export class AgentInitializer extends Initializer {
   protected readonly logger = getLoggerFor(this);
   public agent: Agent;
+  public did: string;
 
   public constructor() {
     super();
@@ -72,6 +73,7 @@ export class AgentInitializer extends Initializer {
         }),
       },
     });
+    this.did = 'did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main'
   }
 
   /**
@@ -90,30 +92,28 @@ export class AgentInitializer extends Initializer {
 
     // Register a simple `Http` inbound transport
     this.agent.registerInboundTransport(new HttpInboundTransport({ port: 3015 }));
-
+    const did = this.did;
     // Initialize the agent
     await this.agent.initialize();
-    const did = `did:web:raw.githubusercontent.com:biagioboi:CommunitySolidServer:main`;
-
     try {
       const ed25519Key = await this.agent.wallet.createKey({
         keyType: KeyType.Ed25519,
         privateKey: TypedArrayEncoder.fromString('afjdemoverysercure00000000000013'),
       });
 
-      this.logger.info(did);
-      const builder = new DidDocumentBuilder(did);
+      this.logger.info(this.did);
+      const builder = new DidDocumentBuilder(this.did);
       const ed25519VerificationMethod2020 = getEd25519VerificationKey2018({
         key: ed25519Key,
-        id: `${did}#${ed25519Key.fingerprint}`,
-        controller: did,
+        id: `${this.did}#${ed25519Key.fingerprint}`,
+        controller: this.did,
       });
 
 
       builder.addService(new DidCommV1Service({
         "id": "#inline-0",
         "serviceEndpoint": "http://localhost:3015",
-        "recipientKeys": [`${did}#${ed25519Key.fingerprint}`],
+        "recipientKeys": [`${this.did}#${ed25519Key.fingerprint}`],
         "routingKeys": []
       }));
 
@@ -143,7 +143,7 @@ export class AgentInitializer extends Initializer {
           privateKey: TypedArrayEncoder.fromString('afjdemoverysercure10000000008002')
         }
       });
-      let created_dids = await this.agent.dids.getCreatedDids({method: 'web', did: did});
+      let created_dids = await this.agent.dids.getCreatedDids({method: 'web', did: this.did});
       console.log("This is the User Wallet, it has this DID: " + created_dids[0].did);
     }
   }

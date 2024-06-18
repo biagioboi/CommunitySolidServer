@@ -67,24 +67,6 @@
     "watch": "nodemon --watch \"dist/**/*.js\" --exec npm start",
     "ben_server": "npm start -- -c config/file-vc.json -f .data"
   },
-  "husky": {
-    "hooks": {
-      "pre-commit": "npm run build && npm run lint && npm run test:unit && npm run test:integration",
-      "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
-    }
-  },
-  "commit-and-tag-version": {
-    "scripts": {
-      "postbump": "ts-node ./scripts/upgradeConfig.ts",
-      "postchangelog": "ts-node ./scripts/formatChangelog.ts && markdownlint-cli2-fix"
-    },
-    "writerOpts": {
-      "commitsSort": false
-    },
-    "skip": {
-      "tag": true
-    }
-  },
   "files": [
     "bin",
     "dist",
@@ -97,6 +79,7 @@
     "@credo-ts/askar": "^0.5.3",
     "@credo-ts/core": "file:credo-ts-core-0.5.3.tgz",
     "@credo-ts/node": "^0.5.3",
+    "@digitalcredentials/vc": "file:digitalcredentials-vc-7.0.0.tgz",
     "@hyperledger/aries-askar-nodejs": "^0.2.1",
     "@inrupt/solid-client-vc": "^0.7.4",
     "@rdfjs/types": "^1.1.0",

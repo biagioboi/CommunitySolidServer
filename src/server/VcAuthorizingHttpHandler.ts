@@ -1,4 +1,9 @@
-import {Agent, JsonTransformer, W3cJsonLdVerifiablePresentation} from '@credo-ts/core';
+import {
+  Agent,
+  JsonTransformer,
+  W3cJsonLdVerifiablePresentation,
+  W3cWrappedVerifiablePresentation
+} from '@credo-ts/core';
 import type { Credentials } from '../authentication/Credentials';
 import type { VcExtractor } from '../authentication/VcExtractor';
 import type { VpChecker } from '../authentication/VpChecker';
@@ -139,9 +144,16 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
 
   public async extractNonceAndDomainFromNew(request: HttpRequest): Promise<any> {
     const z: any = JSON.parse(request.headers.vp as string ?? '{}');
-    const presentationParsed = JsonTransformer.fromJSON(z, W3cJsonLdVerifiablePresentation);
+    let presentationParsedLocal: W3cJsonLdVerifiablePresentation | undefined;
+    if (z.wrappedVP !== undefined) {
+      /* It is a wrapper, check both the signature of the user and the signature of the app */
+      const wrappedVP = JsonTransformer.fromJSON(z, W3cWrappedVerifiablePresentation);
+      presentationParsedLocal = wrappedVP.wrappedVP as W3cJsonLdVerifiablePresentation;
+    } else {
+      presentationParsedLocal = JsonTransformer.fromJSON(z, W3cJsonLdVerifiablePresentation);
+    }
     let nonceAndDomain = {};
-    nonceAndDomain = await this.vpChecker.extractNonceAndDomainFromNew(presentationParsed);
+    nonceAndDomain = await this.vpChecker.extractNonceAndDomainFromNew(presentationParsedLocal);
 
     return nonceAndDomain;
   }
