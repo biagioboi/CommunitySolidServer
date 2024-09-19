@@ -1,12 +1,14 @@
-import type { Credentials } from '../authentication/Credentials';
-import type { CredentialsExtractor } from '../authentication/CredentialsExtractor';
-import type { Authorizer } from '../authorization/Authorizer';
-import type { PermissionReader } from '../authorization/PermissionReader';
-import type { ModesExtractor } from '../authorization/permissions/ModesExtractor';
-import type { ResponseDescription } from '../http/output/response/ResponseDescription';
-import { getLoggerFor } from '../logging/LogUtil';
-import type { OperationHttpHandlerInput } from './OperationHttpHandler';
-import { OperationHttpHandler } from './OperationHttpHandler';
+import type {Credentials} from '../authentication/Credentials';
+import type {CredentialsExtractor} from '../authentication/CredentialsExtractor';
+import type {Authorizer} from '../authorization/Authorizer';
+import type {PermissionReader} from '../authorization/PermissionReader';
+import type {ModesExtractor} from '../authorization/permissions/ModesExtractor';
+import type {ResponseDescription} from '../http/output/response/ResponseDescription';
+import {getLoggerFor} from '../logging/LogUtil';
+import type {OperationHttpHandlerInput} from './OperationHttpHandler';
+import {OperationHttpHandler} from './OperationHttpHandler';
+import {AccessMode} from "../authorization/permissions/Permissions";
+import {ResourceIdentifier} from "../http/representation/ResourceIdentifier";
 
 export interface AuthorizingHttpHandlerArgs {
   /**

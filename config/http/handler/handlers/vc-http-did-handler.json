@@ -2,9 +2,11 @@
   "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^6.0.0/components/context.jsonld",
   "@graph": [
     {
-      "comment": "Creates the server that starts listening for requests.",
-      "@id": "urn:solid-server:default:AgentInitializer",
-      "@type": "AgentInitializer",
+      "@id": "urn:solid-server:default:VcDIDHandler",
+      "@type": "VcDidCommHttpHandler",
+      "args_requestParser": { "@id": "urn:solid-server:default:RequestParser" },
+      "args_errorHandler": { "@id": "urn:solid-server:default:ErrorHandler" },
+      "args_responseWriter": { "@id": "urn:solid-server:default:ResponseWriter" },
       "args_operationHandler": {
         "@type": "VcAuthorizingHttpHandler",
         "args_credentialsExtractor": { "@type": "VcExtractor" },
@@ -22,7 +24,7 @@
           "args_operationHandler": { "@id": "urn:solid-server:default:OperationHandler" }
         }
       },
-      "args_requestParser": { "@id": "urn:solid-server:default:RequestParser" }
+      "args_agentInitializer": { "@id":  "urn:solid-server:default:AgentInitializer"}
     }
   ]
 }

@@ -1,4 +1,10 @@
 import type { V2RequestPresentationMessage } from '@credo-ts/core';
+import {
+  BasicMessage, ConnectionEventTypes, ConnectionRecord,
+  ConsoleLogger, DidExchangeState, DidKey, getJwkFromKey, isDid, JwsService,
+} from '@credo-ts/core';
+import { EnvelopeService } from '@credo-ts/core/build/agent/EnvelopeService';
+import { sha256 } from 'js-sha256';
 import type { RequestParser } from '../http/input/RequestParser';
 import type { ErrorHandler } from '../http/output/error/ErrorHandler';
 import { ResponseDescription } from '../http/output/response/ResponseDescription';
@@ -8,15 +14,14 @@ import { AgentInitializer } from '../init/AgentInitializer';
 import { getLoggerFor } from '../logging/LogUtil';
 import { assertError } from '../util/errors/ErrorUtil';
 import { HttpError } from '../util/errors/HttpError';
-import {guardedStreamFrom, readJsonStream} from '../util/StreamUtil';
+import { readJsonStream, readableToString } from '../util/StreamUtil';
 import type { HttpHandlerInput } from './HttpHandler';
 import { HttpHandler } from './HttpHandler';
 import type { HttpRequest } from './HttpRequest';
 import type { HttpResponse } from './HttpResponse';
 import type { VcAuthorizingHttpHandler } from './VcAuthorizingHttpHandler';
-import {OperationHttpHandler} from "./OperationHttpHandler";
 
-export interface VcHttpHandlerArgs {
+export interface VcDidCommHttpHandlerArgs {
   /**
      * Parses the incoming requests.
      */
@@ -35,7 +40,6 @@ export interface VcHttpHandlerArgs {
   operationHandler: VcAuthorizingHttpHandler;
 
   agentInitializer: AgentInitializer;
-
 }
 
 /**
@@ -55,7 +59,7 @@ export interface VcHttpHandlerArgs {
  *    -Perform steps for it to be authorized
  *  -Return response
  */
-export class VcHttpHandler extends HttpHandler {
+export class VcDidCommHttpHandler extends HttpHandler {
   private readonly logger = getLoggerFor(this);
 
   private readonly requestParser: RequestParser;
@@ -63,11 +67,10 @@ export class VcHttpHandler extends HttpHandler {
   private readonly responseWriter: ResponseWriter;
 
   private readonly operationHandler: VcAuthorizingHttpHandler;
-
   private readonly nonceDomainMap: Map<any, any>;
   private readonly agentInitializer: AgentInitializer;
 
-  public constructor(args: VcHttpHandlerArgs) {
+  public constructor(args: VcDidCommHttpHandlerArgs) {
     super();
     this.requestParser = args.requestParser;
     this.errorHandler = args.errorHandler;
@@ -79,10 +82,10 @@ export class VcHttpHandler extends HttpHandler {
 
   public async handle({ request, response }: HttpHandlerInput): Promise<void> {
     let result: ResponseDescription;
+
     let body: NodeJS.Dict<any> = {};
     // Extract body from http request
     const operation = await this.requestParser.handleSafe(request);
-    console.log(operation.conditions);
     try {
       if (operation.body.data !== undefined) {
         body = await readJsonStream(operation.body.data);
@@ -108,9 +111,11 @@ export class VcHttpHandler extends HttpHandler {
   // -'vc' header (Initial Request)
   // -'vp' header (Secondary Request/Verifiable Presentation)
   public async canHandle({ request, response }: HttpHandlerInput): Promise<void> {
-    if ((request.headers.vc === undefined) &&
-            (request.headers.vp === undefined) && (request.headers.encryptedrequest === undefined)) {
-      throw new Error('Required headers missing: \'VC\' or \'VP\'.');
+    if ((request.headers.didvc === undefined) && (request.headers.encryptedrequest === undefined)) {
+      throw new Error('Required headers missing: \'didvc\' or \'encryptedrequest\'.');
+    }
+    if (request.method === "OPTION") {
+      throw new Error('Required headers missing: \'didvc\' or \'encryptedrequest\'.');
     }
   }
 
@@ -119,11 +124,12 @@ export class VcHttpHandler extends HttpHandler {
      */
   public async handleRequest(request: HttpRequest, response: HttpResponse, body?: NodeJS.Dict<any>):
   Promise<ResponseDescription> {
-
-    if ((request.headers.vc !== undefined) && body && this.isInitialRequest(body)) {
+    // Handle if it is the initial request
+    // I added this if here just to move the compuatation to my point non repudiation
+    if ((request.headers.didvc !== undefined) && body && this.isInitialRequest(body)) {
       this.logger.info('Detected Initial Request');
       if (await this.validUserAppIssuer(request, body)) {
-        return this.isRequestingVPCompliant(body) ? await this.handleInitialRequestCompliant(request, body) : await this.handleInitialRequest(request, body);
+        return await this.handleInitialRequest(request, body);
       }
       throw new Error('Invalid user - app - issuer combination.');
 
@@ -191,117 +197,30 @@ export class VcHttpHandler extends HttpHandler {
     const crypto = require('crypto');
     const nonce = crypto.randomBytes(16).toString('base64');
     this.logger.info(`Generated Nonce: ${nonce}`);
-    const ourDID = this.agentInitializer.did;
-    // Store nonce and domain in the map
-    this.nonceDomainMap.set(nonce, `https://bboi.solidcommunity.net/definition/ourProtocol#test`);
-    const result: ResponseDescription = new ResponseDescription(401);
-    const VPrequest = {
-      VerifiablePresentation: {
-        query: {
-          type: 'QueryByExample',
-          credentialQuery: {
-            reason: 'We need you to prove your eligibility.',
-            owner: {
-              id: ourDID,
-            },
-            issuer: {
-              id: body.issuer,
-            },
-            client: {
-              id: body.client,
-            },
-            agent: {
-              id: body.agent,
-            },
-          },
-        },
-        challenge: nonce,
-        domain: `https://bboi.solidcommunity.net/definition/ourProtocol#test`,
-      },
-    };
-    const representation = new BasicRepresentation(JSON.stringify(VPrequest), 'application/ld+json');
-    result.data = representation.data;
-
-    return result;
-  }
-
-  // Deal with the initial request and respond with a VP Request
-  public async handleInitialRequestCompliant(request: HttpRequest, body: NodeJS.Dict<any>): Promise<ResponseDescription> {
-    const crypto = require('crypto');
-    const nonce = crypto.randomBytes(16).toString('base64');
-    this.logger.info(`Generated Nonce: ${nonce}`);
     const uri = request.url;
     // Store nonce and domain in the map
     this.nonceDomainMap.set(nonce, `http://localhost:3000${uri}`);
     const result: ResponseDescription = new ResponseDescription(401);
 
-    /* If you want, I can generate also a more professional VPR, using the agent */
-    const { message: msg } = await this.agentInitializer.agent.proofs.createRequest({
-      protocolVersion: 'v2',
-      proofFormats: {
-        presentationExchange: {
-          '@context': [ 'https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld' ],
-          type: [ 'VerifiablePresentationRequest' ],
-          presentationDefinition: {
-            id: '32f54163-7166-48f1-93d8-ff217bdb0653',
-            input_descriptors: [
-              {
-                id: 'unisa_student',
-                name: 'University of Salerno Demo',
-                purpose: 'Demonstrate to be a student from the University of Salerno to access this POD',
-                constraints: {
-                  fields: [
-                    {
-                      path: [
-                        '$.credentialSubject.degree',
-                        '$.credentialSubject.claims.degree',
-                      ],
-                    },
-                  ],
-                },
-              },
-            ],
-            format: { // Which format we want for the signature? Currently, we are using ldp_vp
-              ldp_vc: {
-                proof_type: [
-                  'JsonWebSignature2020',
-                  'Ed25519Signature2018',
-                  'EcdsaSecp256k1Signature2019',
-                  'RsaSignature2018',
-                ],
-              },
-              ldp_vp: {
-                proof_type: [ 'Ed25519Signature2018' ],
-              },
-              ldp: {
-                proof_type: [ 'RsaSignature2018' ],
-              },
-            },
-            requestACP: {
-              type: [ 'ACPContext' ],
-              target: `http://localhost:3000${uri}`,
-              owner: this.agentInitializer.did, // We should revise also this one .. maybe the server doesn't have a pod but have a proper space
-              issuer: body.issuer,
-              client: body.client,
-              agent: body.agent,
-            },
-          },
-          options: {
-            challenge: nonce,
-            domain: `https://bboi.solidcommunity.net/definition/ourProtocol#context`,
-          },
-          signPresentationRequest: false,
-
-        },
-
-      },
+    const outOfBandRecord = await this.agentInitializer.agent.oob.createInvitation({
+      autoAcceptConnection: true,
+      handshake: true,
+      invitationDid: this.agentInitializer.did,
     });
 
-    const rpMsg = msg as V2RequestPresentationMessage;
-    const k = rpMsg.requestAttachments[0].data.json!;
-    /* But it is up to you, only if you really want, ps. the presentation is not a graph */
-    result.data = new BasicRepresentation(JSON.stringify(k), 'application/json').data;
+    const invitationUrl = outOfBandRecord.outOfBandInvitation.toUrl({ domain: this.agentInitializer.agent.config.endpoints[0] });
+    await this.agentInitializer.sendTheProof({
+      acp: {
+        target: `http://localhost:3000${uri}`,
+        issuer: body.issuer,
+        client: body.client,
+        agent: body.agent,
+      },
+      challenge: nonce,
+    });
 
+
+    result.data = new BasicRepresentation(JSON.stringify({invitationUrl: invitationUrl}), 'application/json').data;
     return result;
   }
 
@@ -316,6 +235,85 @@ export class VcHttpHandler extends HttpHandler {
       throw error;
     }
   }
+
+  public async handleThirdRequest(request: HttpRequest, response: HttpResponse): Promise<ResponseDescription> {
+    const operation = await this.requestParser.handleSafe(request);
+    try {
+      return await this.operationHandler.handleSafe({ operation, request, response });
+      // Const {challenge} = await this.operationHandler.extractNonceAndDomainFromNew(request);
+      // this.nonceDomainMap.delete(challenge);
+      // return result;
+    } catch (error: unknown) {
+      throw error;
+    }
+  }
+
+
+  public async handleEncryptedResourceRequest(request: HttpRequest, response: HttpResponse): Promise<ResponseDescription> {
+    const stringHeader = request.headers.encryptedrequest! as string;
+    const stringCssEncryptedResource = request.headers.cssencryptedresource! as string;
+    const jws = JSON.parse(stringHeader);
+    const payload = btoa(JSON.parse(stringCssEncryptedResource));
+    const jwsService = new JwsService();
+    this.logger.info("test here")
+    this.logger.info(payload)
+    const { isValid, signerKeys } = await jwsService.verifyJws(this.agentInitializer.agent.context, {
+      jws: {
+        ...jws,
+        payload,
+      },
+      jwkResolver: ({ jws: { header } }) => {
+        if (typeof header.kid !== 'string' || !isDid(header.kid, 'key')) {
+          throw new Error('JWS header kid must be a did:key DID.');
+        }
+        const didKey = DidKey.fromDid(header.kid);
+        return getJwkFromKey(didKey.key);
+      },
+    });
+    this.logger.info(JSON.stringify(isValid));
+    this.logger.info(JSON.stringify(signerKeys));
+    const resp = new ResponseDescription(200);
+    resp.data = new BasicRepresentation(JSON.stringify(request.headers.encryptedrequest), 'application/json').data;
+    return resp;
+  }
+
+  public async handleAuthenticatedRequest(request: HttpRequest, response: HttpResponse): Promise<ResponseDescription> {
+    const resource = await this.handleThirdRequest(request, response);
+    if (resource.data?.readable) {
+      const stringToEncrypt = await readableToString(resource.data);
+      const envService = new EnvelopeService(new ConsoleLogger());
+      const theMessage = new BasicMessage({ content: stringToEncrypt });
+      const responseEncrypt: any = await envService.packMessageWithReturn(
+          this.agentInitializer.agent.context,
+          theMessage,
+          {
+            recipientKeys: [ this.agentInitializer.ttpKey ],
+            routingKeys: [],
+            senderKey: null,
+          },
+      );
+
+      const encryptedMessage = responseEncrypt.envelope;
+      encryptedMessage.hash = sha256(JSON.stringify(theMessage));
+      this.agentInitializer.lastKeyForMsgEncryption.push({hash: encryptedMessage.hash, symKey: responseEncrypt.sym_key});
+      const resp = new ResponseDescription(200);
+      resp.data = new BasicRepresentation(JSON.stringify(encryptedMessage), 'application/json').data;
+      return resp;
+    }
+    return resource;
+  }
+
+  //
+  // const z: any = JSON.parse(request.headers.vp as string ?? '{}');
+  // const presentationParsed = JsonTransformer.fromJSON(z, W3cJsonLdVerifiablePresentation);
+  //
+  //     const response = await this.agentInitializer.agent.w3cCredentials.verifyPresentation({
+  //       presentation: presentationParsed,
+  //       challenge: objNew.challenge,
+  //       domain: objNew.domain,
+  //     });
+  //
+
   public async validNonceAndDomain(request: HttpRequest): Promise<boolean> {
     this.logger.info('Checking Nonce and Domain...');
     try {

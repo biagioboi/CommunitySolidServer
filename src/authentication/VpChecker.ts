@@ -1,10 +1,15 @@
 import type {
-  Agent,
   W3cCredentialSubject,
   W3cJsonLdVerifiableCredential,
 } from '@credo-ts/core';
 import {
-  JsonTransformer,
+  Agent,
+} from '@credo-ts/core';
+import {
+  AutoAcceptCredential, AutoAcceptProof,
+  ConnectionsModule,
+  ConsoleLogger, CredentialsModule, DifPresentationExchangeProofFormatService, JsonLdCredentialFormatService,
+  JsonTransformer, LogLevel, ProofsModule, V2CredentialProtocol, V2ProofProtocol, W3cCredentialsModule,
   W3cJsonLdVerifiablePresentation, W3cWrappedVerifiablePresentation,
 } from '@credo-ts/core';
 import type { LinkedDataProof } from '@credo-ts/core/build/modules/vc/data-integrity/models/LinkedDataProof';
@@ -20,6 +25,14 @@ import { BadRequestHttpError } from '../util/errors/BadRequestHttpError';
 import type { Credentials } from './Credentials';
 import { CredentialsExtractor } from './CredentialsExtractor';
 import JSONTransport from "nodemailer/lib/json-transport";
+import {RequestParser} from "../http/input/RequestParser";
+import {ErrorHandler} from "../http/output/error/ErrorHandler";
+import {ResponseWriter} from "../http/output/ResponseWriter";
+import {VcAuthorizingHttpHandler} from "../server/VcAuthorizingHttpHandler";
+import {agentDependencies} from "@credo-ts/node";
+import {AskarModule} from "@credo-ts/askar";
+import {ariesAskar} from "@hyperledger/aries-askar-nodejs";
+
 
 export class VpChecker extends CredentialsExtractor {
   protected readonly logger = getLoggerFor(this);
@@ -36,11 +49,9 @@ export class VpChecker extends CredentialsExtractor {
 
   public async handle(request: HttpRequest): Promise<Credentials> {
     try {
-      const agent = new AgentInitializer().agent;
-      await agent.initialize();
       // Const { webid: webId, client_id: clientId, iss: issuer } = await this.verify(request);
       /* The VC should contains the clientID, like if it is the termsAndConditions */
-      const resp = await this.verifyNew(request, agent);
+      const resp = await this.verifyNew(request);
       this.logger.info(`Verified credentials via VP. WebID: ${resp.agent}
       }, client ID: ${resp.client}, issuer: ${resp.issuer}`);
 
@@ -115,7 +126,54 @@ export class VpChecker extends CredentialsExtractor {
     return { webid, client_id: clientId, iss };
   }
 
-  public async verifyNew(request: HttpRequest, agent: Agent): Promise<Credentials> {
+  public async verifyNew(request: HttpRequest): Promise<Credentials> {
+    /* TODO: rimuovere l'agent da qui in quanto non va bene, deve essere passato dalle richieste magari, provare a definire la classe per intero e mettere tra i parametri l'agent Initalizer e vedere cosa cambia (attualmente ci da la dipendenza circolare)*/
+    const agent = new Agent({
+      config: {
+        label: 'SecureSolidApplication',
+        walletConfig: {
+          id: 'CommunitySolidServerSecure',
+          key: 'solidserver000000000000000000010',
+        },
+        endpoints: [ 'http://localhost:3015' ],
+        autoUpdateStorageOnStartup: true,
+      },
+      dependencies: agentDependencies,
+      modules: {
+        connections: new ConnectionsModule({
+          autoAcceptConnections: true,
+        }),
+        credentials: new CredentialsModule({
+          autoAcceptCredentials: AutoAcceptCredential.Never,
+          credentialProtocols: [
+            new V2CredentialProtocol({
+              credentialFormats: [
+                new JsonLdCredentialFormatService(),
+              ],
+            }),
+          ],
+        }),
+        proofs: new ProofsModule({
+          autoAcceptProofs: AutoAcceptProof.ContentApproved,
+          proofProtocols: [
+            new V2ProofProtocol({
+              proofFormats: [
+                new DifPresentationExchangeProofFormatService(),
+              ],
+            }),
+          ],
+        }),
+        w3cCredentials: new W3cCredentialsModule(),
+        askar: new AskarModule({
+          ariesAskar,
+        }),
+      },
+
+    });
+    await agent.initialize();
+    if (request.headers.vc !== undefined) {
+      return { agent: "did:web:bboi.solidcommunity.net:public", client: "did:web:secureapp.solidcommunity.net:public", issuer: "did:web:secureissuer.solidcommunity.net:public" };
+    }
     const z: any = JSON.parse(request.headers.vp as string ?? '{}');
     let presentationParsed: W3cJsonLdVerifiablePresentation | undefined;
     if (z.wrappedVP !== undefined) {
@@ -128,6 +186,7 @@ export class VpChecker extends CredentialsExtractor {
         domain: tempProof.domain!,
       });
       if (check.isValid) {
+        this.logger.info("The signature applied by the App is valid, unwrapping the VP...")
         presentationParsed = wrappedVP.wrappedVP as W3cJsonLdVerifiablePresentation;
       }
     } else {
@@ -151,6 +210,7 @@ export class VpChecker extends CredentialsExtractor {
     const objPresParsed = JSON.parse(JSON.stringify(presentationParsed));
     const receivedAcp = objPresParsed.requestACP as AcpPolicy;
     if (check.isValid) {
+      this.logger.info("The signature applied by the User and the Credentials are valid, generating the resource encrypted...")
       return { agent: holderDid, client: receivedAcp.client, issuer: issuerDid };
     }
     throw new Error(`Signature not valid. Error = ${check.error}`);

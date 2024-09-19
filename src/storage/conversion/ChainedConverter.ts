@@ -102,6 +102,7 @@ export class ChainedConverter extends RepresentationConverter {
       args.representation = await match.converters[i].handle(args);
     }
 
+
     // For now, we assume any kind of conversion invalidates the stored byte length.
     // In the future, we could let converters handle this individually, as some might know the size of the result.
     if (match.converters.length > 0) {
