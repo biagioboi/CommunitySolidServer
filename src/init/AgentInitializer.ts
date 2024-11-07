@@ -225,6 +225,8 @@ export class AgentInitializer extends Initializer {
           'transfer-encoding': 'chunked',
           host: 'localhost:3000',
         };
+
+        // Create a dummy request to get the requested file. This is somehow strange, we may start thinking to have a reader of the file, instead of complicating the life in this way.
         const operation = await this.requestParser.handle(request);
         operation.conditions = {
           matchesMetadata: (): boolean => true,
@@ -234,6 +236,8 @@ export class AgentInitializer extends Initializer {
         const txtToCypher = await readableToString(responseDescription.data!);
         const envService = new EnvelopeService(new ConsoleLogger());
         const theMessage = new BasicMessage({ content: txtToCypher });
+
+        let startTime:Date = new Date();
         const responseEncrypt: any = await envService.packMessageWithReturn(
             this.agent.context,
             theMessage,
@@ -243,6 +247,12 @@ export class AgentInitializer extends Initializer {
               senderKey: null,
             },
         );
+        let endTime:Date = new Date();
+        const milliDiff: number = startTime.getTime()
+            - endTime.getTime();
+
+        // get seconds
+        this.logger.info(`Time elapsed ${ milliDiff } `)
 
         const encryptedMessage = responseEncrypt.envelope;
         encryptedMessage.hash = sha256(JSON.stringify(theMessage));

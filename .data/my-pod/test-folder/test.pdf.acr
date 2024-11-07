@@ -1,0 +1,21 @@
+# ACR for the test resource
+@prefix acl: <http://www.w3.org/ns/auth/acl#>.
+@prefix acp: <http://www.w3.org/ns/solid/acp#>.
+
+<#test.pdf>
+    a acp:AccessControlResource;
+    acp:resource <./test.pdf>;
+    acp:accessControl <#publicReadAccess>.
+
+<#publicReadAccess>
+    a acp:AccessControl;
+    acp:apply [
+        a acp:Policy;
+        acp:allow acl:Read;
+        acp:allOf [
+            a acp:Matcher;
+            acp:agent "did:web:bboi.solidcommunity.net:public";
+            acp:issuer "did:web:secureissuer.solidcommunity.net:public";
+            acp:client "did:web:secureapp.solidcommunity.net:public";
+        ]
+    ].

@@ -31,21 +31,14 @@ And, of course, for many others who like to experience Solid.
 
 ## ⚡ Running the Community Solid Server
 
-Use [Node.js](https://nodejs.org/en/) 14.14 or up and execute:
+This is a modified version of Community Solid Sever, Use [Node.js](https://nodejs.org/en/) 14.14 or up and execute:
 
 ```shell
-npx @solid/community-server
+npm install
+npm run modified-css
 ```
 
 Now visit your brand new server at [http://localhost:3000/](http://localhost:3000/)!
-
-To persist your pod's contents between restarts, use:
-
-```shell
-npx @solid/community-server -c @css:config/file.json -f data/
-```
-
-Find more ways to run the server in the [documentation](https://communitysolidserver.github.io/CommunitySolidServer/6.x/usage/starting-server/).
 
 ## 🔧 Configure your server
 
