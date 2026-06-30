@@ -15,7 +15,7 @@
   "service": [
     {
       "id": "#inline-0",
-      "serviceEndpoint": "http://localhost:3015",
+      "serviceEndpoint": "http://solid-css:3015",
       "type": "did-communication",
       "priority": 0,
       "recipientKeys": [

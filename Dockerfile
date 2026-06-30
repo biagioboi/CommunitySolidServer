@@ -1,19 +1,26 @@
 # Build stage
-FROM node:lts-alpine AS build
+FROM node:20.10.0-bookworm-slim AS build
 
 # Set current working directory
 WORKDIR /community-server
+
+# Native dependencies need node-gyp during installation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  python3 \
+  make \
+  g++ \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy the dockerfile's context's community server files
 COPY . .
 
 # Install and build the Solid community server
-RUN npm install && npm run build
+RUN npm install --engine-strict=false --no-audit --no-fund && npm run build
 
 
 
 # Runtime stage
-FROM node:lts-alpine
+FROM node:20.10.0-bookworm-slim
 
 # Add contact informations for questions about the container
 LABEL maintainer="Solid Community Server Docker Image Maintainer <thomas.dupont@ugent.be>"

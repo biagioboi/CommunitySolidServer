@@ -36,7 +36,10 @@ This is a modified version of Community Solid Sever, Use [Node.js](https://nodej
 ```shell
 npm install
 npm run modified-css
+```
 
+You can also eventually run everything in a Docker container.
+```shell
 docker build -t modified-css .
 docker run --name solid-css \
   --network solid-demo-net \
