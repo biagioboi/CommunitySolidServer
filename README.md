@@ -48,7 +48,7 @@ docker run --name solid-css \
   modified-css \
   -c config/file-vc.json \
   -f .data \
-  -b http://solid-css:3000/
+  -b http://localhost:3000/
 ```
 
 Now visit your brand new server at [http://localhost:3000/](http://localhost:3000/)!

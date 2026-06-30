@@ -82,7 +82,7 @@ export class AgentInitializer extends Initializer {
           id: 'CommunitySolidServerSecure',
           key: 'solidserver000000000000000000010',
         },
-        endpoints: [ 'http://localhost:3015' ],
+        endpoints: [ 'http://solid-css:3015' ],
         autoUpdateStorageOnStartup: true,
       },
       dependencies: agentDependencies,

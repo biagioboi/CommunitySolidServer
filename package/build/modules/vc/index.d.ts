@@ -1,0 +1,12 @@
+export * from './W3cCredentialService';
+export * from './W3cCredentialsModuleConfig';
+export * from './W3cCredentialServiceOptions';
+export * from './W3cPresentationRequestServiceOptions';
+export * from './repository';
+export * from './W3cCredentialsModule';
+export * from './W3cCredentialsApi';
+export * from './models';
+export * from './data-integrity';
+export * from './jwt-vc';
+export * from './constants';
+export { w3cDate } from './util';

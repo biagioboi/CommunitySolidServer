@@ -9,5 +9,4 @@
 /test/tmp
 /.data/.internal
 /node_modules
-/package/build
 .DS_Store
