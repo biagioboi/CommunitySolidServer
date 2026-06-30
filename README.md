@@ -36,6 +36,16 @@ This is a modified version of Community Solid Sever, Use [Node.js](https://nodej
 ```shell
 npm install
 npm run modified-css
+
+docker build -t modified-css .
+docker run --name solid-css \
+  --network solid-demo-net \
+  -p 3000:3000 \
+  -v css-data:/community-server/.data \
+  modified-css \
+  -c config/file-vc.json \
+  -f .data \
+  -b http://solid-css:3000/
 ```
 
 Now visit your brand new server at [http://localhost:3000/](http://localhost:3000/)!

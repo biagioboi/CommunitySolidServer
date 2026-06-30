@@ -18,9 +18,9 @@ import {
   getEd25519VerificationKey2018,
   getJwkFromKey,
   HttpOutboundTransport,
-  isDid,
-  JsonLdCredentialFormatService,
-  JwsService,
+  isDid, JsonEncoder,
+  JsonLdCredentialFormatService, JwaSignatureAlgorithm,
+  JwsService, JwtPayload,
   Key,
   KeyType,
   LogLevel,
@@ -28,7 +28,7 @@ import {
   TypedArrayEncoder,
   V2CredentialProtocol,
   V2ProofProtocol,
-  W3cCredentialsModule,
+  W3cCredentialsModule, SignatureSuiteRegistry, getKeyFromVerificationMethod
 } from '@credo-ts/core';
 import {agentDependencies, HttpInboundTransport} from '@credo-ts/node';
 import {ariesAskar} from '@hyperledger/aries-askar-nodejs';
@@ -41,6 +41,18 @@ import {RequestParser} from '../http/input/RequestParser';
 import {HttpResponse} from "../server/HttpResponse";
 import {EnvelopeService} from "@credo-ts/core/build/agent/EnvelopeService";
 import {sha256} from "js-sha256";
+
+import {createWalletKeyPairClass} from "@credo-ts/core/build/crypto/WalletKeyPair";
+const vc: any = require('@digitalcredentials/vc'); // Replace `any` with specific types if known
+
+
+
+
+
+import {stringToBytes} from "did-jwt/lib/util";
+import utils_1 from "../../package/build/utils";
+import JsonEncoder_1 from "../../package/build/utils/JsonEncoder";
+import {defaultDocumentLoader} from "@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader";
 
 /**
  * A class that can be used to instantiate and start a server based on a Component.js configuration.
@@ -231,6 +243,12 @@ export class AgentInitializer extends Initializer {
         operation.conditions = {
           matchesMetadata: (): boolean => true,
         };
+        // HERE WE NEED TO CHANGE, WE NEED TO CHECK THE CONDITIONS AND
+        // ON THE BASIS OF THIS WE WILL RELEASE THE ENCRYPTED FILE OR NOT.
+        // IF THE acl:Apply is a Read then goes with simple access to resource
+        // and if the acl:Apply is a NonRepudiableRead then goes with the encrypted file, 
+        // and the signature of the hash of the file.
+        
         const response: HttpResponse = {} as any;
         const responseDescription = await this.operationHandler.handle({request, operation, response});
         const txtToCypher = await readableToString(responseDescription.data!);
@@ -248,17 +266,53 @@ export class AgentInitializer extends Initializer {
             },
         );
         let endTime:Date = new Date();
-        const milliDiff: number = startTime.getTime()
-            - endTime.getTime();
+        const milliDiff: number = endTime.getTime()
+            - startTime.getTime();
 
         // get seconds
         this.logger.info(`Time elapsed ${ milliDiff } `)
 
         const encryptedMessage = responseEncrypt.envelope;
         encryptedMessage.hash = sha256(JSON.stringify(theMessage));
+        const jwsService = new JwsService();
+        const created_dids = await this.agent.dids.getCreatedDids({method: 'web'});
+        let current_did = created_dids[0];
+        let verkey = current_did.didDocument!.verificationMethod?.[0].publicKeyBase58;
+        if (typeof verkey === "string") {
+          const key = Key.fromPublicKeyBase58(verkey, KeyType.Ed25519)
+          const kid = new DidKey(key).did
+
+          //const payload = TypedArrayEncoder.fromString(encryptedMessage.hash);
+          const toConvert = await this.generateHashCredentials(objWrappedVP.wrappedVP.requestACP.agent, encryptedMessage.hash)
+          const payload = TypedArrayEncoder.fromString(toConvert);
+          let resp = await jwsService.createJws(this.agent.context, {
+            payload,
+            key,
+            header: {
+              kid,
+            },
+            protectedHeaderOptions: {
+              alg: JwaSignatureAlgorithm.EdDSA,
+              jwk: getJwkFromKey(key),
+            }
+          })
+          console.log(resp)
+          encryptedMessage.signatureFromCSS = resp;
+        }
+        /* We also need the hash encrypted for the TTP so that it can check if the app applied the right signature */
+        /*const responseEncryptHash: any = await envService.packMessageWithReturn(
+            this.agent.context,
+            new BasicMessage({ content: encryptedMessage.hash }),
+            {
+              recipientKeys: [ this.ttpKey ],
+              routingKeys: [],
+              senderKey: null,
+            },
+        );*/
         this.lastKeyForMsgEncryption[encryptedMessage.hash] = responseEncrypt.sym_key;
         this.logger.info(`Sending encrypted message to the App, hash ${ encryptedMessage.hash } ...`);
-        await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify(encryptedMessage));
+        await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify(/*{encryptedMessage: */encryptedMessage /*,responseEncryptHash: responseEncryptHash*/));
+
       } else if (objWrappedVP.signedResource !== undefined) {
         const jws = objWrappedVP.signedResource;
         const jwsService = new JwsService();
@@ -278,8 +332,7 @@ export class AgentInitializer extends Initializer {
         if (isValid) {
           this.logger.info(`Signature validated, sending symmetric key to the App ...`);
           const revertBasePayload = atob(objWrappedVP.signedResource.payload);
-          const payloadJWSObject = JSON.parse(JSON.parse(revertBasePayload));
-          await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify({keyForDecrypt: this.lastKeyForMsgEncryption[payloadJWSObject['hash']]}));
+          await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify({keyForDecrypt: this.lastKeyForMsgEncryption[revertBasePayload]}));
         }
       }
     });
@@ -335,7 +388,8 @@ export class AgentInitializer extends Initializer {
       let created_dids = await this.agent.dids.getCreatedDids({method: 'web', did: this.did});
       console.log("This is the User Wallet, it has this DID: " + created_dids[0].did);
 
-      /*const invitation = await fetch('http://localhost:8082/generateInvitation');
+      /*
+      const invitation = await fetch('http://localhost:8082/generateInvitation');
       const respJson = await invitation.json();
       const invitationUrl = respJson.url;
       const agentContext = this.agent.context;
@@ -343,7 +397,67 @@ export class AgentInitializer extends Initializer {
       const agentEventEmitter = this.agent.events;
       const transportService = new TransportService(agentContext, agentEventEmitter);
       this.ttpKey
-      const sessionWithTTP = transportService.findSessionByConnectionId(conRecord.connectionRecord!.id)*/
+      const sessionWithTTP = transportService.findSessionByConnectionId(conRecord.connectionRecord!.id)
+      */
     }
   }
+
+
+  private async createSuite(did:string): Promise<any> {
+    let created_dids = await this.agent.dids.getCreatedDids({method: 'web'});
+    const signingKey = created_dids[0].didDocument!.authentication![0] as string
+    const signatureSuiteRegistry =  this.agent.dependencyManager.resolve(SignatureSuiteRegistry);
+    const suiteInfo = signatureSuiteRegistry.getByProofType("Ed25519Signature2018");
+    const WalletKeyPair = createWalletKeyPairClass(this.agent.context.wallet)
+
+    const sigKey = await getKeyFromVerificationMethod(created_dids[0].didDocument!.verificationMethod![0]);
+    const keyPair = new WalletKeyPair({
+      controller: did,
+      id: signingKey,
+      key: sigKey,
+      wallet: this.agent.context.wallet
+    });
+
+    const SuiteClass = suiteInfo.suiteClass;
+    const toReturn = new SuiteClass({
+      key: keyPair,
+      LDKeyClass: WalletKeyPair,
+      proof: {
+        verificationMethod: signingKey
+      },
+      useNativeCanonize: false
+    });
+    this.logger.info(toReturn);
+    return toReturn;
+  }
+
+  private async generateHashCredentials(holderDID:string, hash:string):Promise<string> {
+    let created_dids = await this.agent.dids.getCreatedDids({method: 'web'});
+    let did = created_dids[0].didDocument!.id;
+    let suite =  await this.createSuite(did);
+    const credential = {
+      "@context": [
+        "https://www.w3.org/2018/credentials/v1",
+        "https://secureapp.solidcommunity.net/public/NonRepudiationContext.jsonld"
+      ],
+      "id": "https://example.com/credentials/1872",
+      "type": ["VerifiableCredential", "NonRepudiableOrigin"],
+      "issuer": did,
+      "issuanceDate": new Date().toISOString().replace(/\d{2}\.\d{3,}(?=Z$)/, num =>
+          Number(num).toFixed(2).padStart(5, "0")),
+      "credentialSubject": {
+        "id": holderDID
+      },
+      "signedHash": hash
+    };
+
+    return await vc.issue({
+      credential: credential,
+      suite: suite,
+      documentLoader: defaultDocumentLoader(this.agent.context)
+    });
+
+  }
+
 }
+

@@ -38,7 +38,7 @@
         },
         {
           "@type": "YargsParameter",
-          "name": "baseUrl",
+            "name": "baseUrl",
           "options": {
             "alias": "b",
             "requiresArg": true,

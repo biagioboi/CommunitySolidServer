@@ -7,8 +7,8 @@ WORKDIR /community-server
 # Copy the dockerfile's context's community server files
 COPY . .
 
-# Install and build the Solid community server (prepare script cannot run in wd)
-RUN npm ci --unsafe-perm && npm run build
+# Install and build the Solid community server
+RUN npm install && npm run build
 
 
 
@@ -19,11 +19,13 @@ FROM node:lts-alpine
 LABEL maintainer="Solid Community Server Docker Image Maintainer <thomas.dupont@ugent.be>"
 
 # Container config & data dir for volume sharing
-# Defaults to filestorage with /data directory (passed through CMD below)
 RUN mkdir /config /data
 
 # Set current directory
 WORKDIR /community-server
+
+# Data directory used by the modified-css startup command
+RUN mkdir .data
 
 # Copy runtime files from build stage
 COPY --from=build /community-server/package.json .
@@ -39,6 +41,5 @@ EXPOSE 3000
 # Set command run by the container
 ENTRYPOINT [ "node", "bin/server.js" ]
 
-# By default run in filemode (overriden if passing alternative arguments or env vars)
-ENV CSS_CONFIG=config/file.json
-ENV CSS_ROOT_FILE_PATH=/data
+# By default start like `npm run modified-css`
+CMD [ "-c", "config/file-vc.json", "-f", ".data" ]
