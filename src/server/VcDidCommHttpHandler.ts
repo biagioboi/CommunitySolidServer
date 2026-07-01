@@ -1,9 +1,8 @@
 import type { V2RequestPresentationMessage } from '@credo-ts/core';
 import {
   BasicMessage, ConnectionEventTypes, ConnectionRecord,
-  ConsoleLogger, DidExchangeState, DidKey, getJwkFromKey, isDid, JwsService,
+  DidExchangeState, DidKey, getJwkFromKey, isDid, JwsService,
 } from '@credo-ts/core';
-import { EnvelopeService } from '@credo-ts/core/build/agent/EnvelopeService';
 import { sha256 } from 'js-sha256';
 import type { RequestParser } from '../http/input/RequestParser';
 import type { ErrorHandler } from '../http/output/error/ErrorHandler';
@@ -12,6 +11,7 @@ import type { ResponseWriter } from '../http/output/ResponseWriter';
 import { BasicRepresentation } from '../http/representation/BasicRepresentation';
 import { AgentInitializer } from '../init/AgentInitializer';
 import { getLoggerFor } from '../logging/LogUtil';
+import { packDidCommMessageWithReturn } from '../util/DidCommUtil';
 import { assertError } from '../util/errors/ErrorUtil';
 import { HttpError } from '../util/errors/HttpError';
 import { readJsonStream, readableToString } from '../util/StreamUtil';
@@ -281,9 +281,8 @@ export class VcDidCommHttpHandler extends HttpHandler {
     const resource = await this.handleThirdRequest(request, response);
     if (resource.data?.readable) {
       const stringToEncrypt = await readableToString(resource.data);
-      const envService = new EnvelopeService(new ConsoleLogger());
       const theMessage = new BasicMessage({ content: stringToEncrypt });
-      const responseEncrypt: any = await envService.packMessageWithReturn(
+      const { encryptedMessage, symKey } = await packDidCommMessageWithReturn(
           this.agentInitializer.agent.context,
           theMessage,
           {
@@ -293,9 +292,9 @@ export class VcDidCommHttpHandler extends HttpHandler {
           },
       );
 
-      const encryptedMessage = responseEncrypt.envelope;
-      encryptedMessage.hash = sha256(JSON.stringify(theMessage));
-      this.agentInitializer.lastKeyForMsgEncryption.push({hash: encryptedMessage.hash, symKey: responseEncrypt.sym_key});
+      const messageHash = sha256(JSON.stringify(theMessage));
+      encryptedMessage.hash = messageHash;
+      this.agentInitializer.lastKeyForMsgEncryption[messageHash] = symKey;
       const resp = new ResponseDescription(200);
       resp.data = new BasicRepresentation(JSON.stringify(encryptedMessage), 'application/json').data;
       return resp;

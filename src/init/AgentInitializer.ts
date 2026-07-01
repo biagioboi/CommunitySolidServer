@@ -39,7 +39,6 @@ import {guardedStreamFrom, readableToString} from "../util/StreamUtil";
 import {HttpRequest} from "../server/HttpRequest";
 import {RequestParser} from '../http/input/RequestParser';
 import {HttpResponse} from "../server/HttpResponse";
-import {EnvelopeService} from "@credo-ts/core/build/agent/EnvelopeService";
 import {sha256} from "js-sha256";
 
 import {createWalletKeyPairClass} from "@credo-ts/core/build/crypto/WalletKeyPair";
@@ -53,6 +52,7 @@ import {stringToBytes} from "did-jwt/lib/util";
 import utils_1 from "../../package/build/utils";
 import JsonEncoder_1 from "../../package/build/utils/JsonEncoder";
 import {defaultDocumentLoader} from "@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader";
+import { packDidCommMessageWithReturn } from '../util/DidCommUtil';
 
 /**
  * A class that can be used to instantiate and start a server based on a Component.js configuration.
@@ -84,6 +84,7 @@ export class AgentInitializer extends Initializer {
         },
         endpoints: [ 'http://solid-css:3015' ],
         autoUpdateStorageOnStartup: true,
+        logger: new ConsoleLogger(LogLevel.debug),
       },
       dependencies: agentDependencies,
       modules: {
@@ -252,11 +253,10 @@ export class AgentInitializer extends Initializer {
         const response: HttpResponse = {} as any;
         const responseDescription = await this.operationHandler.handle({request, operation, response});
         const txtToCypher = await readableToString(responseDescription.data!);
-        const envService = new EnvelopeService(new ConsoleLogger());
         const theMessage = new BasicMessage({ content: txtToCypher });
 
         let startTime:Date = new Date();
-        const responseEncrypt: any = await envService.packMessageWithReturn(
+        const { encryptedMessage, symKey } = await packDidCommMessageWithReturn(
             this.agent.context,
             theMessage,
             {
@@ -272,8 +272,8 @@ export class AgentInitializer extends Initializer {
         // get seconds
         this.logger.info(`Time elapsed ${ milliDiff } `)
 
-        const encryptedMessage = responseEncrypt.envelope;
-        encryptedMessage.hash = sha256(JSON.stringify(theMessage));
+        const messageHash = sha256(JSON.stringify(theMessage));
+        encryptedMessage.hash = messageHash;
         const jwsService = new JwsService();
         const created_dids = await this.agent.dids.getCreatedDids({method: 'web'});
         let current_did = created_dids[0];
@@ -282,9 +282,9 @@ export class AgentInitializer extends Initializer {
           const key = Key.fromPublicKeyBase58(verkey, KeyType.Ed25519)
           const kid = new DidKey(key).did
 
-          //const payload = TypedArrayEncoder.fromString(encryptedMessage.hash);
-          const toConvert = await this.generateHashCredentials(objWrappedVP.wrappedVP.requestACP.agent, encryptedMessage.hash)
-          const payload = TypedArrayEncoder.fromString(toConvert);
+          // The app sends this signed payload back to request the symmetric key,
+          // so the JWS payload must remain the raw message hash.
+          const payload = TypedArrayEncoder.fromString(messageHash);
           let resp = await jwsService.createJws(this.agent.context, {
             payload,
             key,
@@ -300,17 +300,17 @@ export class AgentInitializer extends Initializer {
           encryptedMessage.signatureFromCSS = resp;
         }
         /* We also need the hash encrypted for the TTP so that it can check if the app applied the right signature */
-        /*const responseEncryptHash: any = await envService.packMessageWithReturn(
+        /*const responseEncryptHash = await packDidCommMessageWithReturn(
             this.agent.context,
-            new BasicMessage({ content: encryptedMessage.hash }),
+            new BasicMessage({ content: messageHash }),
             {
               recipientKeys: [ this.ttpKey ],
               routingKeys: [],
               senderKey: null,
             },
         );*/
-        this.lastKeyForMsgEncryption[encryptedMessage.hash] = responseEncrypt.sym_key;
-        this.logger.info(`Sending encrypted message to the App, hash ${ encryptedMessage.hash } ...`);
+        this.lastKeyForMsgEncryption[messageHash] = symKey;
+        this.logger.info(`Sending encrypted message to the App, hash ${ messageHash } ...`);
         await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify(/*{encryptedMessage: */encryptedMessage /*,responseEncryptHash: responseEncryptHash*/));
 
       } else if (objWrappedVP.signedResource !== undefined) {
@@ -331,8 +331,17 @@ export class AgentInitializer extends Initializer {
         });
         if (isValid) {
           this.logger.info(`Signature validated, sending symmetric key to the App ...`);
-          const revertBasePayload = atob(objWrappedVP.signedResource.payload);
-          await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify({keyForDecrypt: this.lastKeyForMsgEncryption[revertBasePayload]}));
+          const signedPayload = TypedArrayEncoder.toUtf8String(
+            TypedArrayEncoder.fromBase64(objWrappedVP.signedResource.payload),
+          );
+          const signedHash = this.extractSignedHashFromSignedPayload(signedPayload);
+          const keyForDecrypt = this.lastKeyForMsgEncryption[signedHash];
+
+          if (keyForDecrypt === undefined) {
+            throw new Error(`No decryption key found for signed hash ${ signedHash }.`);
+          }
+
+          await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify({ keyForDecrypt }));
         }
       }
     });
@@ -459,5 +468,45 @@ export class AgentInitializer extends Initializer {
 
   }
 
-}
+  private extractSignedHashFromSignedPayload(signedPayload: string): string {
+    if (/^[a-f0-9]{64}$/iu.test(signedPayload)) {
+      return signedPayload;
+    }
 
+    let parsedPayload: any;
+    try {
+      parsedPayload = JSON.parse(signedPayload);
+    } catch {
+      throw new Error('Could not parse signedResource payload.');
+    }
+
+    if (typeof parsedPayload === 'string' && /^[a-f0-9]{64}$/iu.test(parsedPayload)) {
+      return parsedPayload;
+    }
+
+    if (parsedPayload && typeof parsedPayload === 'object') {
+      if (typeof parsedPayload.hash === 'string') {
+        if (typeof parsedPayload.signatureFromCSS?.payload === 'string') {
+          const cssSignedHash = TypedArrayEncoder.toUtf8String(
+            TypedArrayEncoder.fromBase64(parsedPayload.signatureFromCSS.payload),
+          );
+
+          if (cssSignedHash !== parsedPayload.hash) {
+            throw new Error('The signed resource hash does not match the CSS signature payload.');
+          }
+        }
+
+        return parsedPayload.hash;
+      }
+
+      if (typeof parsedPayload.signatureFromCSS?.payload === 'string') {
+        return TypedArrayEncoder.toUtf8String(
+          TypedArrayEncoder.fromBase64(parsedPayload.signatureFromCSS.payload),
+        );
+      }
+    }
+
+    throw new Error('Could not extract a hash from signedResource payload.');
+  }
+
+}

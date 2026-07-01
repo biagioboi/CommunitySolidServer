@@ -14,6 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the dockerfile's context's community server files
 COPY . .
 
+RUN echo "CONTENUTO DOPO COPY . ." && \
+    ls -la /community-server && \
+    echo "CONTENUTO .data:" && \
+    ls -la /community-server/.data || true
+
 # Install and build the Solid community server
 RUN npm install --engine-strict=false --no-audit --no-fund && npm run build
 
@@ -31,8 +36,8 @@ RUN mkdir /config /data
 # Set current directory
 WORKDIR /community-server
 
-# Data directory used by the modified-css startup command
-RUN mkdir .data
+# Reuse the local data directory instead of creating a new empty one
+COPY --from=build /community-server/.data /data
 
 # Copy runtime files from build stage
 COPY --from=build /community-server/package.json .
@@ -49,4 +54,4 @@ EXPOSE 3000
 ENTRYPOINT [ "node", "bin/server.js" ]
 
 # By default start like `npm run modified-css`
-CMD [ "-c", "config/file-vc.json", "-f", ".data" ]
+CMD [ "-c", "config/file-vc.json", "-f", "/data" ]
