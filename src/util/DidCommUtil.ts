@@ -4,6 +4,7 @@ import { ForwardMessage } from '@credo-ts/core/build/modules/routing/messages/Fo
 export type MutableEncryptedMessage = EncryptedMessage & {
   hash?: string;
   signatureFromCSS?: unknown;
+  hashCredential?: unknown;
 };
 
 export interface DidCommEncryptionKey {

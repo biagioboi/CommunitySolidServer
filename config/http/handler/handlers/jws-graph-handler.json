@@ -1,0 +1,16 @@
+{
+  "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^6.0.0/components/context.jsonld",
+  "@graph": [
+    {
+      "@id": "urn:solid-server:default:JwsGraphHandler",
+      "@type": "JwsGraphHttpHandler",
+      "args_errorHandler": { "@id": "urn:solid-server:default:ErrorHandler" },
+      "args_responseWriter": { "@id": "urn:solid-server:default:ResponseWriter" },
+      "args_baseUrl": { "@id": "urn:solid-server:default:variable:baseUrl" },
+      "args_jwsGraphService": {
+        "@type": "JwsGraphService",
+        "args_rootFilePath": { "@id": "urn:solid-server:default:variable:rootFilePath" }
+      }
+    }
+  ]
+}

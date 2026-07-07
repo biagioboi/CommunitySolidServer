@@ -210,6 +210,7 @@ export class VcDidCommHttpHandler extends HttpHandler {
 
     const invitationUrl = outOfBandRecord.outOfBandInvitation.toUrl({ domain: this.agentInitializer.agent.config.endpoints[0] });
     await this.agentInitializer.sendTheProof({
+      outOfBandId: outOfBandRecord.id,
       acp: {
         target: `http://localhost:3000${uri}`,
         issuer: body.issuer,
@@ -286,7 +287,7 @@ export class VcDidCommHttpHandler extends HttpHandler {
           this.agentInitializer.agent.context,
           theMessage,
           {
-            recipientKeys: [ this.agentInitializer.ttpKey ],
+            recipientKeys: await this.agentInitializer.getTtpRecipientKeys(),
             routingKeys: [],
             senderKey: null,
           },
@@ -294,6 +295,12 @@ export class VcDidCommHttpHandler extends HttpHandler {
 
       const messageHash = sha256(JSON.stringify(theMessage));
       encryptedMessage.hash = messageHash;
+      /*
+       * The same future app -> TTP `checkResource` flow documented in AgentInitializer.ts
+       * also applies here: the app could optionally forward this `encryptedMessage` plus
+       * the NRR it will send back to the CSS, so the TTP can store both before releasing
+       * `keyForDecrypt`.
+       */
       this.agentInitializer.lastKeyForMsgEncryption[messageHash] = symKey;
       const resp = new ResponseDescription(200);
       resp.data = new BasicRepresentation(JSON.stringify(encryptedMessage), 'application/json').data;

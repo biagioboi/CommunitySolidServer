@@ -16,6 +16,16 @@
             a acp:Matcher;
             acp:agent "did:web:bboi.solidcommunity.net:public";
             acp:issuer "did:web:secureissuer.solidcommunity.net:public";
-            acp:client "did:web:secureapp.solidcommunity.net:public";
+            acp:client "did:web:secureapp-1.solidcommunity.net:public";
         ]
-    ].
+    ];
+    acp:apply [
+        a acp:Policy;
+        acp:allow acl:NRRead;
+        acp:allOf [
+            a acp:Matcher;
+            acp:agent "did:web:bboi.solidcommunity.net:public";
+            acp:issuer "did:web:secureissuer.solidcommunity.net:public";
+            acp:client "did:web:secureapp-2.solidcommunity.net:public";
+        ]
+    ] .

@@ -10,6 +10,9 @@ export * from './authentication/UnsecureWebIdExtractor';
 export * from './authentication/VcExtractor';
 export * from './authentication/VpChecker';
 
+// Audit
+export * from './audit/JwsGraphService';
+
 // Authorization/Access
 export * from './authorization/access/AccessChecker';
 export * from './authorization/access/AgentAccessChecker';
@@ -294,6 +297,7 @@ export * from './server/HttpHandler';
 export * from './server/HttpRequest';
 export * from './server/HttpResponse';
 export * from './server/HttpServerFactory';
+export * from './server/JwsGraphHttpHandler';
 export * from './server/OperationHttpHandler';
 export * from './server/ParsingHttpHandler';
 export * from './server/ServerConfigurator';

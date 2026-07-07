@@ -5,6 +5,10 @@
       "comment": "Creates the server that starts listening for requests.",
       "@id": "urn:solid-server:default:AgentInitializer",
       "@type": "AgentInitializer",
+      "args_jwsGraphService": {
+        "@type": "JwsGraphService",
+        "args_rootFilePath": { "@id": "urn:solid-server:default:variable:rootFilePath" }
+      },
       "args_operationHandler": {
         "@type": "VcAuthorizingHttpHandler",
         "args_credentialsExtractor": { "@type": "VcExtractor" },
@@ -22,7 +26,8 @@
           "args_operationHandler": { "@id": "urn:solid-server:default:OperationHandler" }
         }
       },
-      "args_requestParser": { "@id": "urn:solid-server:default:RequestParser" }
+      "args_requestParser": { "@id": "urn:solid-server:default:RequestParser" },
+      "args_ttpInvitationEndpoint": "http://demo-ttp:8082/generateInvitation"
     }
   ]
 }

@@ -2,6 +2,7 @@
   "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^6.0.0/components/context.jsonld",
   "import": [
     "css:config/http/handler/handlers/oidc.json",
+    "css:config/http/handler/handlers/jws-graph-handler.json",
     "css:config/http/handler/handlers/storage-description.json",
     "css:config/http/handler/handlers/vc-http-handler.json",
     "css:config/http/handler/handlers/vc-http-did-handler.json"
@@ -21,6 +22,7 @@
             { "@id": "urn:solid-server:default:SetupHandler" },
             { "@id": "urn:solid-server:default:VcHandler" },
             { "@id": "urn:solid-server:default:VcDIDHandler" },
+            { "@id": "urn:solid-server:default:JwsGraphHandler" },
             { "@id": "urn:solid-server:default:OidcHandler" },
             { "@id": "urn:solid-server:default:NotificationHttpHandler" },
             { "@id": "urn:solid-server:default:StorageDescriptionHandler" },

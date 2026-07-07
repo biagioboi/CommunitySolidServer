@@ -118,6 +118,7 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
         this.logger.info(`Extracted credentials: ${JSON.stringify(credentials)}`);
 
         const requestedModes = await this.modesExtractor.handleSafe(operation);
+        console.log(`Retrieved required modes: ${[...requestedModes.entrySets()].map(([id, set]): string => `{ ${id.path}: ${[...set]} }`)}`);
         this.logger.info(`Retrieved required modes: ${
             [...requestedModes.entrySets()].map(([id, set]): string => `{ ${id.path}: ${[...set]} }`)
         }`);
