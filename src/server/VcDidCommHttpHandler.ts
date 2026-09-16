@@ -9,12 +9,15 @@ import type { ErrorHandler } from '../http/output/error/ErrorHandler';
 import { ResponseDescription } from '../http/output/response/ResponseDescription';
 import type { ResponseWriter } from '../http/output/ResponseWriter';
 import { BasicRepresentation } from '../http/representation/BasicRepresentation';
+import { RepresentationMetadata } from '../http/representation/RepresentationMetadata';
 import { AgentInitializer } from '../init/AgentInitializer';
 import { getLoggerFor } from '../logging/LogUtil';
 import { packDidCommMessageWithReturn } from '../util/DidCommUtil';
 import { assertError } from '../util/errors/ErrorUtil';
 import { HttpError } from '../util/errors/HttpError';
 import { readJsonStream, readableToString } from '../util/StreamUtil';
+import { toLiteral } from '../util/TermUtil';
+import { HTTP, SOLID_HTTP, XSD } from '../util/Vocabularies';
 import type { HttpHandlerInput } from './HttpHandler';
 import { HttpHandler } from './HttpHandler';
 import type { HttpRequest } from './HttpRequest';
@@ -103,6 +106,7 @@ export class VcDidCommHttpHandler extends HttpHandler {
 
     if (result) {
       this.logger.info('Sending Response...');
+      console.log(result);
       return await this.responseWriter.handleSafe({ response, result });
     }
   }
@@ -111,12 +115,22 @@ export class VcDidCommHttpHandler extends HttpHandler {
   // -'vc' header (Initial Request)
   // -'vp' header (Secondary Request/Verifiable Presentation)
   public async canHandle({ request, response }: HttpHandlerInput): Promise<void> {
-    if ((request.headers.didvc === undefined) && (request.headers.encryptedrequest === undefined)) {
+    // Follow-up legs of a challenge this handler itself issued: real validation (nonce/domain,
+    // VP, signed receipt) happens downstream in handleRequest - canHandle only routes.
+    if (request.headers.didvc !== undefined
+      || request.headers.encryptedrequest !== undefined
+      || this.isSecondaryRequest(request)
+      || this.isReleaseRequest(request)) {
+      return;
+    }
+    if (request.method === 'OPTIONS') {
       throw new Error('Required headers missing: \'didvc\' or \'encryptedrequest\'.');
     }
-    if (request.method === "OPTION") {
-      throw new Error('Required headers missing: \'didvc\' or \'encryptedrequest\'.');
+    const operation = await this.requestParser.handleSafe(request);
+    if (await this.operationHandler.requiresNonRepudiableRead(operation)) {
+      return;
     }
+    throw new Error('Required headers missing: \'didvc\' or \'encryptedrequest\'.');
   }
 
   /**
@@ -126,10 +140,30 @@ export class VcDidCommHttpHandler extends HttpHandler {
   Promise<ResponseDescription> {
     // Handle if it is the initial request
     // I added this if here just to move the compuatation to my point non repudiation
-    if ((request.headers.didvc !== undefined) && body && this.isInitialRequest(body)) {
+    this.logger.info('Checking if it is the initial request...');
+    this.logger.info(`Request headers: ${JSON.stringify(request.headers)}`);
+
+    // Handle the non-repudiable release follow-up: the App sends back its signed NRR to
+    // obtain the decryption key for a previously received `encryptedresource`.
+    if (this.isReleaseRequest(request)) {
+      this.logger.info('Detected Release Request');
+      return await this.handleReleaseRequest(request);
+    }
+
+    // Handle plain requests targeting a resource that only grants public read through
+    // the non-repudiable read mode (acl:NRRead) - challenge with the DID flow directly.
+    if (request.headers.didvc === undefined && !this.isSecondaryRequest(request)) {
+      const operation = await this.requestParser.handleSafe(request);
+      if (await this.operationHandler.requiresNonRepudiableRead(operation)) {
+        this.logger.info('Detected request to a NonRepudiableRead-gated resource');
+        return await this.handlePassiveChallenge(request);
+      }
+    }
+
+    if ((request.headers.didvc !== undefined) && this.isInitialRequest(request.headers)) {
       this.logger.info('Detected Initial Request');
-      if (await this.validUserAppIssuer(request, body)) {
-        return await this.handleInitialRequest(request, body);
+      if (await this.validUserAppIssuer(request, request.headers)) {
+        return await this.handleInitialRequest(request, request.headers);
       }
       throw new Error('Invalid user - app - issuer combination.');
 
@@ -177,10 +211,10 @@ export class VcDidCommHttpHandler extends HttpHandler {
   }
 
   // Initial request body will indicate vc issuer, app, user
-  public isInitialRequest(body: NodeJS.Dict<any>): boolean {
-    return body.issuer !== undefined &&
-            body.client !== undefined &&
-            body.agent !== undefined;
+  public isInitialRequest(header: NodeJS.Dict<any>): boolean {
+    return header.issuer !== undefined &&
+            header.client !== undefined &&
+            header.agent !== undefined;
   }
 
   public isRequestingVPCompliant(body: NodeJS.Dict<any>): boolean {
@@ -192,37 +226,94 @@ export class VcDidCommHttpHandler extends HttpHandler {
     return request.headers.vp !== undefined;
   }
 
-  // Deal with the initial request and respond with a VP Request
+  // A release request carries the App's signed NRR, asking for the decryption key of a
+  // previously received `encryptedresource`.
+  public isReleaseRequest(request: HttpRequest): boolean {
+    return request.headers.signedresource !== undefined;
+  }
+
+  // Builds the resource URL as actually reached by the client, using the real Host header
+  // instead of a hardcoded origin - must match what the client itself uses as `target`.
+  // Mirrors OriginalUrlExtractor's own host/protocol resolution (Forwarded/X-Forwarded-* takes
+  // priority over the raw Host header), so the target this handler embeds in the challenge and
+  // stores in nonceDomainMap always matches the resource identifier CSS itself will compute.
+  private buildTargetUrl(request: HttpRequest): string {
+    const single = (value: string | string[] | undefined): string | undefined =>
+      Array.isArray(value) ? value[0] : value;
+
+    const protocol = single(request.headers['x-forwarded-proto']) ?? (request.connection && (request.connection as any).encrypted ? 'https' : 'http');
+    const host = single(request.headers['x-forwarded-host']) ?? single(request.headers.host) ?? 'localhost:3000';
+    return `${protocol}://${host}${request.url}`;
+  }
+
+  // Deal with the initial request and respond with a VP Request. The proof request is fully
+  // embedded in the WWW-Authenticate header (connectionless) - no DIDComm connection/OOB
+  // invitation is established for this leg; the VP comes back via the `vp` HTTP header instead.
   public async handleInitialRequest(request: HttpRequest, body: NodeJS.Dict<any>): Promise<ResponseDescription> {
     const crypto = require('crypto');
     const nonce = crypto.randomBytes(16).toString('base64');
     this.logger.info(`Generated Nonce: ${nonce}`);
-    const uri = request.url;
+    const target = this.buildTargetUrl(request);
     // Store nonce and domain in the map
-    this.nonceDomainMap.set(nonce, `http://localhost:3000${uri}`);
-    const result: ResponseDescription = new ResponseDescription(401);
+    this.nonceDomainMap.set(nonce, target);
 
-    const outOfBandRecord = await this.agentInitializer.agent.oob.createInvitation({
-      autoAcceptConnection: true,
-      handshake: true,
-      invitationDid: this.agentInitializer.did,
-    });
-
-    const invitationUrl = outOfBandRecord.outOfBandInvitation.toUrl({ domain: this.agentInitializer.agent.config.endpoints[0] });
-    await this.agentInitializer.sendTheProof({
-      outOfBandId: outOfBandRecord.id,
+    const proofRequestOptions = {
       acp: {
-        target: `http://localhost:3000${uri}`,
+        target,
         issuer: body.issuer,
         client: body.client,
         agent: body.agent,
       },
       challenge: nonce,
-    });
+    };
 
+    const metadata = new RepresentationMetadata();
+    metadata.add(HTTP.terms.statusCodeNumber, toLiteral(401, XSD.terms.integer));
+    metadata.add(
+      SOLID_HTTP.terms.wwwAuthenticate,
+      await this.agentInitializer.createDidCommAuthenticateHeader(proofRequestOptions),
+    );
 
-    result.data = new BasicRepresentation(JSON.stringify({invitationUrl: invitationUrl}), 'application/json').data;
-    return result;
+    return new ResponseDescription(401, metadata);
+  }
+
+  // Deal with a plain request to a resource that only grants public read through the
+  // non-repudiable read mode (acl:NRRead). Unlike handleInitialRequest, no issuer/client/agent
+  // is known yet - identity is only revealed and verified once the VP is presented.
+  public async handlePassiveChallenge(request: HttpRequest): Promise<ResponseDescription> {
+    const crypto = require('crypto');
+    const nonce = crypto.randomBytes(16).toString('base64');
+    this.logger.info(`Generated Nonce: ${nonce}`);
+    const target = this.buildTargetUrl(request);
+    this.nonceDomainMap.set(nonce, target);
+
+    const proofRequestOptions = {
+      acp: {
+        target,
+      },
+      challenge: nonce,
+    };
+
+    const metadata = new RepresentationMetadata();
+    metadata.add(HTTP.terms.statusCodeNumber, toLiteral(401, XSD.terms.integer));
+    metadata.add(
+      SOLID_HTTP.terms.wwwAuthenticate,
+      await this.agentInitializer.createDidCommAuthenticateHeader(proofRequestOptions),
+    );
+
+    return new ResponseDescription(401, metadata);
+  }
+
+  // Handles the follow-up leg of the non-repudiable release: the App sends back its signed NRR
+  // (as the `signedresource` header) and receives the `keyfordecrypt` header in response.
+  public async handleReleaseRequest(request: HttpRequest): Promise<ResponseDescription> {
+    const signedResource = JSON.parse(request.headers.signedresource as string);
+    const { keyForDecrypt } = await this.agentInitializer.releaseKeyForSignedResource(signedResource);
+
+    const metadata = new RepresentationMetadata();
+    metadata.add(HTTP.terms.statusCodeNumber, toLiteral(200, XSD.terms.integer));
+    metadata.add(SOLID_HTTP.terms.keyForDecrypt, JSON.stringify(keyForDecrypt));
+    return new ResponseDescription(200, metadata);
   }
 
   public async handleSecondRequest(request: HttpRequest, response: HttpResponse): Promise<ResponseDescription> {
@@ -293,7 +384,9 @@ export class VcDidCommHttpHandler extends HttpHandler {
           },
       );
 
-      const messageHash = sha256(JSON.stringify(theMessage));
+      // Hash the raw content directly - see the same fix and rationale in
+      // AgentInitializer.buildNonRepudiableRelease.
+      const messageHash = sha256(stringToEncrypt);
       encryptedMessage.hash = messageHash;
       /*
        * The same future app -> TTP `checkResource` flow documented in AgentInitializer.ts

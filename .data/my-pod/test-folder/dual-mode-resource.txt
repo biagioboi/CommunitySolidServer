@@ -1,0 +1,2 @@
+This resource has two access modes depending on who asks: secureapp gets it only
+via non-repudiable read (acl:NRRead), secureapp-2 gets it via plain acl:Read.

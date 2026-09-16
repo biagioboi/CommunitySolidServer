@@ -9,6 +9,7 @@
       "args_responseWriter": { "@id": "urn:solid-server:default:ResponseWriter" },
       "args_operationHandler": {
         "@type": "VcAuthorizingHttpHandler",
+        "args_agentInitializer": { "@id": "urn:solid-server:default:AgentInitializer" },
         "args_credentialsExtractor": { "@type": "VcExtractor" },
         "args_vpChecker": {
           "@type": "VpChecker"

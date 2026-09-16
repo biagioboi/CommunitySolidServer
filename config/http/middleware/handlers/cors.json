@@ -28,7 +28,9 @@
         "Location",
         "Updates-Via",
         "WAC-Allow",
-        "Www-Authenticate"
+        "Www-Authenticate",
+        "encryptedresource",
+        "keyfordecrypt"
       ]
     }
   ]

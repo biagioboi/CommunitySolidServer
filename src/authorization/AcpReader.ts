@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import type { IAccessControlledResource, IContext, IPolicy } from '@solid/access-control-policy';
+import type { IAccessControlledResource, IAccessMode, IContext, IPolicy } from '@solid/access-control-policy';
 import { allowAccessModes } from '@solid/access-control-policy';
 import type { Store } from 'n3';
 import type { Credentials } from '../authentication/Credentials';
@@ -29,6 +29,7 @@ const modesMap: Record<string, Readonly<(keyof AclPermissionSet)[]>> = {
   [ACL.Write]: [ AccessMode.append, AccessMode.write ],
   [ACL.Append]: [ AccessMode.append ],
   [ACL.Control]: [ AclMode.control ],
+  [ACL.NRRead]: [ AccessMode.nonRepudiableRead ],
 } as const;
 
 /**
@@ -94,6 +95,25 @@ export class AcpReader extends PermissionReader {
       }
     }
     return permissionSet;
+  }
+
+  /**
+   * Checks whether the target resource has an `acl:NRRead` policy at all, regardless of who is asking.
+   * Used to decide whether to issue a passive DID challenge: matcher-based `acp:allOf` conditions
+   * never match anonymous credentials, so {@link handle} can't answer this question by itself.
+   */
+  public async requiresNonRepudiableRead(target: ResourceIdentifier): Promise<boolean> {
+    const resourceCache = new IdentifierMap<IAccessControlledResource[]>();
+    for (const identifier of this.getAncestorIdentifiers(target)) {
+      const acrs = await getDefault(resourceCache, identifier, async(): Promise<IAccessControlledResource[]> =>
+        [ ...getAccessControlledResources(await this.readAcrData(identifier)) ]);
+      for (const policy of this.getEffectivePolicies(target, acrs)) {
+        if (policy.allow.has(ACL.NRRead as IAccessMode)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /**

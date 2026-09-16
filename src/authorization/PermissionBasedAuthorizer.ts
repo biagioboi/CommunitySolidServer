@@ -76,7 +76,9 @@ export class PermissionBasedAuthorizer extends Authorizer {
    * @param mode - Which mode is requested.
    */
   private requireModePermission(credentials: Credentials, permissionSet: PermissionSet, mode: AccessMode): void {
-    if (!permissionSet[mode]) {
+    const granted = permissionSet[mode] ||
+      (mode === AccessMode.read && permissionSet[AccessMode.nonRepudiableRead]);
+    if (!granted) {
       if (this.isAuthenticated(credentials)) {
         this.logger.warn(`Owner ${credentials.client} has no ${mode} permissions`);
         throw new ForbiddenHttpError();

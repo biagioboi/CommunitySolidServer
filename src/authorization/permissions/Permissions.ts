@@ -9,6 +9,7 @@ export enum AccessMode {
   write = 'write',
   create = 'create',
   delete = 'delete',
+  nonRepudiableRead = 'nonRepudiableRead',
 }
 
 /**

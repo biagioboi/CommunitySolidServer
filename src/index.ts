@@ -113,6 +113,7 @@ export * from './http/output/metadata/LinkRelMetadataWriter';
 export * from './http/output/metadata/MappedMetadataWriter';
 export * from './http/output/metadata/MetadataWriter';
 export * from './http/output/metadata/ModifiedMetadataWriter';
+export * from './http/output/metadata/NonRepudiationMetadataWriter';
 export * from './http/output/metadata/RangeMetadataWriter';
 export * from './http/output/metadata/StorageDescriptionAdvertiser';
 export * from './http/output/metadata/WacAllowMetadataWriter';

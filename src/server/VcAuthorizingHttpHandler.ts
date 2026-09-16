@@ -11,9 +11,13 @@ import type {Authorizer} from '../authorization/Authorizer';
 import type {PermissionReader} from '../authorization/PermissionReader';
 import type {ModesExtractor} from '../authorization/permissions/ModesExtractor';
 import type {Operation} from '../http/Operation';
-import type {ResponseDescription} from '../http/output/response/ResponseDescription';
+import {RepresentationMetadata} from '../http/representation/RepresentationMetadata';
+import {ResponseDescription} from '../http/output/response/ResponseDescription';
 import {AgentInitializer} from '../init/AgentInitializer';
 import {getLoggerFor} from '../logging/LogUtil';
+import {readableToString} from '../util/StreamUtil';
+import {toLiteral} from '../util/TermUtil';
+import {HTTP, SOLID_HTTP, XSD} from '../util/Vocabularies';
 import type {HttpRequest} from './HttpRequest';
 import type {OperationHttpHandlerInput} from './OperationHttpHandler';
 import {OperationHttpHandler} from './OperationHttpHandler';
@@ -45,6 +49,12 @@ export interface VcAuthorizingHttpHandlerArgs {
      * Handler to call if the operation is authorized.
      */
     operationHandler: OperationHttpHandler;
+    /**
+     * Used to build the encrypted, non-repudiable release when only acl:NRRead is granted.
+     * Optional: when absent (e.g. AgentInitializer's own internal operationHandler, to avoid a
+     * circular Component.js dependency), the handler falls back to serving the resource directly.
+     */
+    agentInitializer?: AgentInitializer;
 }
 
 /**
@@ -65,6 +75,7 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
     private readonly permissionReader: PermissionReader;
     private readonly authorizer: Authorizer;
     private readonly operationHandler: OperationHttpHandler;
+    private readonly agentInitializer?: AgentInitializer;
 
     public constructor(args: VcAuthorizingHttpHandlerArgs) {
         super();
@@ -74,6 +85,7 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
         this.permissionReader = args.permissionReader;
         this.authorizer = args.authorizer;
         this.operationHandler = args.operationHandler;
+        this.agentInitializer = args.agentInitializer;
     }
 
     // Uses the VpChecker component to verify the VP, extracts credentials from a valid VP
@@ -108,7 +120,31 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
             throw error;
         }
         this.logger.info(`Authorization succeeded, calling source handler`);
+
+        const permissionSet = availablePermissions.get(operation.target);
+        if (this.agentInitializer && permissionSet?.read !== true && permissionSet?.nonRepudiableRead === true) {
+            return this.handleNonRepudiableRelease(input, credentials);
+        }
+
         return this.operationHandler.handleSafe(input);
+    }
+
+    // Only acl:NRRead is granted (not plain acl:Read): instead of serving the resource directly,
+    // encrypt it for the TTP escrow, attach the NRO evidence, and return it as the `encryptedresource`
+    // header. The App must complete a follow-up release (via the CSS or directly via the TTP) to
+    // obtain the decryption key - see VcDidCommHttpHandler.handleReleaseRequest.
+    private async handleNonRepudiableRelease(input: OperationHttpHandlerInput, credentials: Credentials):
+    Promise<ResponseDescription> {
+        const plainResponse = await this.operationHandler.handleSafe(input);
+        const plaintext = await readableToString(plainResponse.data!);
+        const {encryptedMessage} = await this.agentInitializer!.buildNonRepudiableRelease(
+            credentials.agent ?? '', input.operation.target.path, plaintext,
+        );
+
+        const metadata = new RepresentationMetadata();
+        metadata.add(HTTP.terms.statusCodeNumber, toLiteral(200, XSD.terms.integer));
+        metadata.add(SOLID_HTTP.terms.encryptedResource, JSON.stringify(encryptedMessage));
+        return new ResponseDescription(200, metadata);
     }
 
     // Check acr has appropriate combo for user, app, issuer
@@ -116,9 +152,9 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
     public async checkAcr(operation: Operation, body: NodeJS.Dict<any>): Promise<boolean> {
         const credentials: Credentials = await this.credentialsExtractor.getCredentials(body);
         this.logger.info(`Extracted credentials: ${JSON.stringify(credentials)}`);
-
+        console.log("Testing operation:", operation);
         const requestedModes = await this.modesExtractor.handleSafe(operation);
-        console.log(`Retrieved required modes: ${[...requestedModes.entrySets()].map(([id, set]): string => `{ ${id.path}: ${[...set]} }`)}`);
+        
         this.logger.info(`Retrieved required modes: ${
             [...requestedModes.entrySets()].map(([id, set]): string => `{ ${id.path}: ${[...set]} }`)
         }`);
@@ -129,7 +165,7 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
         }`);
 
         // Return true if any permissions are available to this combination of user/app/issuer as this means there is a match
-        return [...availablePermissions.values()].some(value => value.read === true);
+        return [...availablePermissions.values()].some(value => value.read === true || value.nonRepudiableRead === true);
     }
 
     public async extractNonceAndDomain(request: HttpRequest): Promise<any> {
@@ -160,5 +196,34 @@ export class VcAuthorizingHttpHandler extends OperationHttpHandler {
 
     public async getCredentials(body: NodeJS.Dict<any>): Promise<Credentials> {
         return this.credentialsExtractor.getCredentials(body);
+    }
+
+    // Checks whether the target resource of the operation only grants public read access
+    // through the non-repudiable read mode (acl:NRRead), meaning a normal, unauthenticated
+    // request should be challenged with the DID flow instead of a plain 401/403.
+    //
+    // Note: an acl:NRRead policy is almost always scoped to specific agent/issuer/client matchers
+    // (via acp:allOf), which never match anonymous credentials - so "does anonymous have
+    // nonRepudiableRead" is always false and can't be used to detect this case. Instead, when the
+    // permission reader exposes a structural check (currently only AcpReader does), use that to see
+    // whether the resource has an acl:NRRead policy AT ALL, regardless of who is asking.
+    public async requiresNonRepudiableRead(operation: Operation): Promise<boolean> {
+        const {target} = operation;
+        const requestedModes = await this.modesExtractor.handleSafe(operation);
+        const availablePermissions = await this.permissionReader.handleSafe({credentials: {}, requestedModes});
+        const anonymousPermissions = availablePermissions.get(target);
+
+        // Anonymous already has plain read - no need for a DID challenge.
+        if (anonymousPermissions?.read === true) {
+            return false;
+        }
+
+        const structuralCheck = (this.permissionReader as {requiresNonRepudiableRead?: (id: typeof target) => Promise<boolean>})
+            .requiresNonRepudiableRead;
+        if (typeof structuralCheck === 'function') {
+            return structuralCheck.call(this.permissionReader, target);
+        }
+
+        return anonymousPermissions?.nonRepudiableRead === true;
     }
 }

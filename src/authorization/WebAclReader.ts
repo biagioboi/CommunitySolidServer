@@ -27,6 +27,7 @@ const modesMap: Record<string, Readonly<(keyof AclPermissionSet)[]>> = {
   [ACL.Write]: [ AccessMode.append, AccessMode.write ],
   [ACL.Append]: [ AccessMode.append ],
   [ACL.Control]: [ AclMode.control ],
+  [ACL.NRRead]: [ AccessMode.nonRepudiableRead ],
 } as const;
 
 /**

@@ -115,6 +115,7 @@ export const ACL = createVocabulary('http://www.w3.org/ns/auth/acl#',
   'Read',
   'Append',
   'Control',
+  'NRRead',
 );
 
 export const ACP = createVocabulary('http://www.w3.org/ns/solid/acp#',
@@ -264,6 +265,9 @@ export const SOLID_HTTP = createVocabulary('urn:npm:solid:community-server:http:
   'start',
   'slug',
   'unit',
+  'wwwAuthenticate',
+  'encryptedResource',
+  'keyForDecrypt',
 );
 
 export const SOLID_META = createVocabulary('urn:npm:solid:community-server:meta:',

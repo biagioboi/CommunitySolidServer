@@ -26,6 +26,7 @@ import {
   LogLevel,
   ProofsModule,
   TypedArrayEncoder,
+  type V2RequestPresentationMessage,
   V2CredentialProtocol,
   V2ProofProtocol,
   W3cCredentialsModule, SignatureSuiteRegistry, getKeyFromVerificationMethod,
@@ -73,7 +74,7 @@ export interface AgentInitializerArgs {
 }
 
 interface PendingSignedResourceContext {
-  connectionId: string;
+  connectionId?: string;
   messageHash: string;
   requestedResource: string;
   requesterDid: string;
@@ -84,9 +85,9 @@ interface ProofRequestOptions {
   challenge: string;
   acp: {
     target: string;
-    issuer: string;
-    client: string;
-    agent: string;
+    issuer?: string;
+    client?: string;
+    agent?: string;
   };
 }
 
@@ -101,6 +102,7 @@ interface VerifiedSignedResourceResult {
 
 const DEFAULT_TTP_INVITATION_ENDPOINT = 'http://demo-ttp:8082/generateInvitation';
 const DEFAULT_TTP_CONNECTION_TIMEOUT_MS = 20_000;
+const DEFAULT_PRESENTATION_REQUEST_DOMAIN = 'https://bboi.solidcommunity.net/definition/ourProtocol#test';
 
 export class AgentInitializer extends Initializer {
   protected readonly logger = getLoggerFor(this);
@@ -173,6 +175,171 @@ export class AgentInitializer extends Initializer {
      * A class that can be used to instantiate and start a server based on a Component.js configuration.
      */
 
+  public createPresentationExchangeProofFormat(options: Omit<ProofRequestOptions, 'outOfBandId'>): Record<string, any> {
+    return {
+      '@context': [ 'https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld' ],
+      type: [ 'VerifiablePresentationRequest' ],
+      presentationDefinition: {
+        id: '32f54163-7166-48f1-93d8-ff217bdb0653',
+        input_descriptors: [
+          {
+            id: 'unisa_student',
+            name: 'University of Salerno Demo',
+            purpose: 'Demonstrate to be a student from the University of Salerno to access this POD',
+            constraints: {
+              fields: [
+                {
+                  path: [
+                    '$.credentialSubject.degree',
+                    '$.credentialSubject.claims.degree',
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+        format: {
+          ldp_vc: {
+            proof_type: [
+              'JsonWebSignature2020',
+              'Ed25519Signature2018',
+              'EcdsaSecp256k1Signature2019',
+              'RsaSignature2018',
+            ],
+          },
+          ldp_vp: {
+            proof_type: [ 'Ed25519Signature2018' ],
+          },
+          ldp: {
+            proof_type: [ 'RsaSignature2018' ],
+          },
+        },
+        requestACP: {
+          type: [ 'ACPContext' ],
+          target: options.acp.target,
+          owner: this.did,
+          issuer: options.acp.issuer,
+          client: options.acp.client,
+          agent: options.acp.agent,
+        },
+      },
+      options: {
+        challenge: options.challenge,
+        domain: DEFAULT_PRESENTATION_REQUEST_DOMAIN,
+      },
+      signPresentationRequest: false,
+    };
+  }
+
+  public async createPresentationRequestPayload(options: Omit<ProofRequestOptions, 'outOfBandId'>):
+  Promise<Record<string, unknown>> {
+    const { message } = await this.agent.proofs.createRequest({
+      protocolVersion: 'v2',
+      proofFormats: {
+        presentationExchange: this.createPresentationExchangeProofFormat(options),
+      },
+    });
+
+    const requestMessage = message as V2RequestPresentationMessage;
+    const presentationRequest = requestMessage.requestAttachments[0].data.json;
+    if (!presentationRequest || typeof presentationRequest !== 'object' || Array.isArray(presentationRequest)) {
+      throw new Error('Expected proof request attachment to contain a JSON object.');
+    }
+    return presentationRequest;
+  }
+
+  public async createDidCommAuthenticateHeader(options: Omit<ProofRequestOptions, 'outOfBandId'>):
+  Promise<string> {
+    const presentationRequest = await this.createPresentationRequestPayload(options);
+    const encodedPresentationRequest = Buffer
+      .from(JSON.stringify(presentationRequest), 'utf8')
+      .toString('base64')
+      .replace(/\+/gu, '-')
+      .replace(/\//gu, '_')
+      .replace(/=+$/u, '');
+
+    return `didcomm proofRequest="${encodedPresentationRequest}"`;
+  }
+
+  /**
+   * Encrypts the given plaintext resource for the TTP's recipient key and attaches the NRO evidence
+   * (hash + hashCredential + signatureFromCSS). Keeps the symmetric key server-side until a matching
+   * NRR is verified via {@link releaseKeyForSignedResource}.
+   */
+  public async buildNonRepudiableRelease(requesterDid: string, requestedResource: string, plaintext: string,
+    connectionId?: string): Promise<{ encryptedMessage: Record<string, unknown>; messageHash: string }> {
+    const theMessage = new BasicMessage({ content: plaintext });
+    const { encryptedMessage, symKey } = await packDidCommMessageWithReturn(
+      this.agent.context,
+      theMessage,
+      {
+        recipientKeys: await this.getTtpRecipientKeys(),
+        routingKeys: [],
+        senderKey: null,
+      },
+    );
+
+    // Hash the raw plaintext content directly, not a (re-)serialized DIDComm envelope - the
+    // exact wire serialization Credo produces during pack/unpack isn't guaranteed to round-trip
+    // byte-for-byte through an independent JSON.stringify on either side (CSS vs TTP), but the
+    // plain content string is unambiguous on both ends.
+    const messageHash = sha256(plaintext);
+    await this.attachNonRepudiationMaterial(encryptedMessage, requesterDid, messageHash);
+
+    this.lastKeyForMsgEncryption[messageHash] = symKey;
+    this.pendingSignedResourceContexts.set(messageHash, {
+      connectionId,
+      messageHash,
+      requestedResource,
+      requesterDid,
+    });
+
+    return { encryptedMessage: encryptedMessage as unknown as Record<string, unknown>, messageHash };
+  }
+
+  /**
+   * Verifies an app-signed NRR against the pending context created by {@link buildNonRepudiableRelease},
+   * stores it as non-repudiation evidence, and releases the symmetric key.
+   */
+  public async releaseKeyForSignedResource(signedResource: unknown): Promise<{ keyForDecrypt: string }> {
+    const verificationResult = await this.verifySignedResource(signedResource);
+    const keyForDecrypt = this.lastKeyForMsgEncryption[verificationResult.messageHash];
+    const pendingContext = this.pendingSignedResourceContexts.get(verificationResult.messageHash);
+
+    if (keyForDecrypt === undefined) {
+      throw new Error(`No decryption key found for signed hash ${ verificationResult.messageHash }.`);
+    }
+    if (pendingContext === undefined) {
+      throw new Error(`No pending signed resource context found for signed hash ${ verificationResult.messageHash }.`);
+    }
+    if (verificationResult.messageHash !== pendingContext.messageHash) {
+      throw new Error('The signed resource hash does not match the expected message hash.');
+    }
+    if (verificationResult.requesterDid !== undefined && verificationResult.requesterDid !== pendingContext.requesterDid) {
+      throw new Error('The signed resource requester DID does not match the pending request context.');
+    }
+    if (verificationResult.requestedResource !== undefined &&
+        verificationResult.requestedResource !== pendingContext.requestedResource) {
+      throw new Error('The signed resource requested resource does not match the pending request context.');
+    }
+
+    await this.jwsGraphService.storeVerifiedJws({
+      connectionId: pendingContext.connectionId,
+      messageHash: verificationResult.messageHash,
+      requestedResource: pendingContext.requestedResource,
+      requesterDid: pendingContext.requesterDid,
+      signedResource: verificationResult.signedResource,
+      signedResourceType: verificationResult.signedResourceType,
+      signerId: verificationResult.signerId,
+      verifiedAt: new Date().toISOString(),
+    });
+
+    delete this.lastKeyForMsgEncryption[verificationResult.messageHash];
+    this.pendingSignedResourceContexts.delete(verificationResult.messageHash);
+
+    return { keyForDecrypt };
+  }
+
   public async sendTheProof(options: ProofRequestOptions): Promise<void> {
     const listener = async ({ payload }: BaseEvent): Promise<void> => {
       /* If you want, I can generate also a more professional VPR, using the agent */
@@ -192,61 +359,7 @@ export class AgentInitializer extends Initializer {
           connectionId: connRecord.id,
           protocolVersion: 'v2',
           proofFormats: {
-            presentationExchange: {
-              '@context': [ 'https://bboi.solidcommunity.net/public/schemas/2024/presexchange.jsonld' ],
-              type: [ 'VerifiablePresentationRequest' ],
-              presentationDefinition: {
-                id: '32f54163-7166-48f1-93d8-ff217bdb0653',
-                input_descriptors: [
-                  {
-                    id: 'unisa_student',
-                    name: 'University of Salerno Demo',
-                    purpose: 'Demonstrate to be a student from the University of Salerno to access this POD',
-                    constraints: {
-                      fields: [
-                        {
-                          path: [
-                            '$.credentialSubject.degree',
-                            '$.credentialSubject.claims.degree',
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                ],
-                format: { // Which format we want for the signature? Currently, we are using ldp_vp
-                  ldp_vc: {
-                    proof_type: [
-                      'JsonWebSignature2020',
-                      'Ed25519Signature2018',
-                      'EcdsaSecp256k1Signature2019',
-                      'RsaSignature2018',
-                    ],
-                  },
-                  ldp_vp: {
-                    proof_type: ['Ed25519Signature2018'],
-                  },
-                  ldp: {
-                    proof_type: ['RsaSignature2018'],
-                  },
-                },
-                requestACP: {
-                  type: [ 'ACPContext' ],
-                  target: options.acp.target,
-                  owner: this.did,
-                  issuer: options.acp.issuer,
-                  client: options.acp.client,
-                  agent: options.acp.agent,
-                },
-              },
-              options: {
-                challenge: options.challenge,
-                domain: 'https://bboi.solidcommunity.net/definition/ourProtocol#test',
-              },
-              signPresentationRequest: false,
-
-            },
-
+            presentationExchange: this.createPresentationExchangeProofFormat(options),
           },
         });
       } catch (error) {
@@ -311,45 +424,10 @@ export class AgentInitializer extends Initializer {
         const response: HttpResponse = {} as any;
         const responseDescription = await this.operationHandler.handle({request, operation, response});
         const txtToCypher = await readableToString(responseDescription.data!);
-        const theMessage = new BasicMessage({ content: txtToCypher });
-
-        let startTime:Date = new Date();
-        const { encryptedMessage, symKey } = await packDidCommMessageWithReturn(
-            this.agent.context,
-            theMessage,
-            {
-              recipientKeys: await this.getTtpRecipientKeys(),
-              routingKeys: [],
-              senderKey: null,
-            },
-        );
-        let endTime:Date = new Date();
-        const milliDiff: number = endTime.getTime()
-            - startTime.getTime();
-
-        // get seconds
-        this.logger.info(`Time elapsed ${ milliDiff } `)
-
-        const messageHash = sha256(JSON.stringify(theMessage));
         const requesterDid = this.extractRequesterDidFromPresentation(objWrappedVP);
-        await this.attachNonRepudiationMaterial(encryptedMessage, requesterDid, messageHash);
-        /* We also need the hash encrypted for the TTP so that it can check if the app applied the right signature */
-        /*const responseEncryptHash = await packDidCommMessageWithReturn(
-            this.agent.context,
-            new BasicMessage({ content: messageHash }),
-            {
-              recipientKeys: await this.getTtpRecipientKeys(),
-              routingKeys: [],
-              senderKey: null,
-            },
-        );*/
-        this.lastKeyForMsgEncryption[messageHash] = symKey;
-        this.pendingSignedResourceContexts.set(messageHash, {
-          connectionId,
-          messageHash,
-          requestedResource: requestUrl,
-          requesterDid,
-        });
+
+        const { encryptedMessage, messageHash } =
+          await this.buildNonRepudiableRelease(requesterDid, requestUrl, txtToCypher, connectionId);
         /*
          * FUTURE OPTIONAL APP -> TTP FLOW (disabled on purpose)
          *
@@ -389,28 +467,6 @@ export class AgentInitializer extends Initializer {
         await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify(/*{encryptedMessage: */encryptedMessage /*,responseEncryptHash: responseEncryptHash*/));
 
       } else if (objWrappedVP.signedResource !== undefined) {
-        const verificationResult = await this.verifySignedResource(objWrappedVP.signedResource);
-        this.logger.info(`Signed resource (${ verificationResult.signedResourceType }) validated, sending symmetric key to the App ...`);
-        const keyForDecrypt = this.lastKeyForMsgEncryption[verificationResult.messageHash];
-        const pendingContext = this.pendingSignedResourceContexts.get(verificationResult.messageHash);
-
-        if (keyForDecrypt === undefined) {
-          throw new Error(`No decryption key found for signed hash ${ verificationResult.messageHash }.`);
-        }
-        if (pendingContext === undefined) {
-          throw new Error(`No pending signed resource context found for signed hash ${ verificationResult.messageHash }.`);
-        }
-        if (verificationResult.messageHash !== pendingContext.messageHash) {
-          throw new Error('The signed resource hash does not match the expected message hash.');
-        }
-        if (verificationResult.requesterDid !== undefined && verificationResult.requesterDid !== pendingContext.requesterDid) {
-          throw new Error('The signed resource requester DID does not match the pending request context.');
-        }
-        if (verificationResult.requestedResource !== undefined &&
-            verificationResult.requestedResource !== pendingContext.requestedResource) {
-          throw new Error('The signed resource requested resource does not match the pending request context.');
-        }
-
         /*
          * FUTURE OPTIONAL CSS -> TTP DISPUTE FLOW (disabled on purpose)
          *
@@ -437,20 +493,9 @@ export class AgentInitializer extends Initializer {
          * - compare the NRR payload against the stored encrypted resource / hash evidence
          * - return an auditable dispute result to the CSS
          */
-        await this.jwsGraphService.storeVerifiedJws({
-          connectionId: pendingContext.connectionId,
-          messageHash: verificationResult.messageHash,
-          requestedResource: pendingContext.requestedResource,
-          requesterDid: pendingContext.requesterDid,
-          signedResource: verificationResult.signedResource,
-          signedResourceType: verificationResult.signedResourceType,
-          signerId: verificationResult.signerId,
-          verifiedAt: new Date().toISOString(),
-        });
-
+        const { keyForDecrypt } = await this.releaseKeyForSignedResource(objWrappedVP.signedResource);
+        this.logger.info('Signed resource validated, sending symmetric key to the App ...');
         await this.agent.basicMessages.sendMessage(connectionId, JSON.stringify({ keyForDecrypt }));
-        delete this.lastKeyForMsgEncryption[verificationResult.messageHash];
-        this.pendingSignedResourceContexts.delete(verificationResult.messageHash);
       }
     });
 

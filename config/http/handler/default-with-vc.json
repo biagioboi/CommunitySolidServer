@@ -20,7 +20,6 @@
           "handlers": [
             { "@id": "urn:solid-server:default:StaticAssetHandler" },
             { "@id": "urn:solid-server:default:SetupHandler" },
-            { "@id": "urn:solid-server:default:VcHandler" },
             { "@id": "urn:solid-server:default:VcDIDHandler" },
             { "@id": "urn:solid-server:default:JwsGraphHandler" },
             { "@id": "urn:solid-server:default:OidcHandler" },

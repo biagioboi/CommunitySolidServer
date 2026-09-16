@@ -37,7 +37,7 @@ RUN mkdir /config /data
 WORKDIR /community-server
 
 # Reuse the local data directory instead of creating a new empty one
-COPY --from=build /community-server/.data /data
+COPY --from=build /community-server/.data ./data
 
 # Copy runtime files from build stage
 COPY --from=build /community-server/package.json .
@@ -48,10 +48,10 @@ COPY --from=build /community-server/node_modules ./node_modules
 COPY --from=build /community-server/templates ./templates
 
 # Informs Docker that the container listens on the specified network port at runtime
-EXPOSE 3000
+EXPOSE 3002
 
 # Set command run by the container
 ENTRYPOINT [ "node", "bin/server.js" ]
 
 # By default start like `npm run modified-css`
-CMD [ "-c", "config/file-vc.json", "-f", "/data" ]
+CMD [ "-c", "config/file-vc.json", "-f", "/data", "-p", "3002"]
